@@ -1,0 +1,163 @@
+# =============================================================================
+# NocoDB - Traefik Local Mode (HTTP + IP-Whitelist)
+# =============================================================================
+# Usage: docker compose -f docker-compose.traefik-local.yml up -d
+#
+# Requirements:
+#   - External Traefik network (${PROXY_NETWORK})
+#   - DNS resolution for ${SERVICE_HOSTNAME}
+#   - Traefik entrypoint: web (80)
+#
+# Security:
+#   - HTTP only (no TLS) - use only in trusted networks
+#   - Access restricted to IP ranges defined in ${IP_WHITELIST}
+#
+# Access:
+#   - Application: http://${SERVICE_HOSTNAME}
+#   - Only from whitelisted IP ranges
+# =============================================================================
+
+services:
+
+  ### Application Service ###
+  nocodb-server:
+    image: nocodb/nocodb:${NOCODB_VERSION:-latest}
+    restart: unless-stopped
+    container_name: ${STACK_NAME}_SERVER
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/api/v1/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+    environment:
+      - TZ=${TIME_ZONE:-Etc/UTC}
+      - NC_DB=pg://database-server:5432?u=nocodb&p=${DATABASE_PASSWORD}&d=nocodb
+      - NC_DISABLE_TELE=true
+      - NC_DISABLE_AUDIT=true
+      - NC_INVITE_ONLY_SIGNUP=true
+
+      # Database Connection Pool (max: 100, default: 10)
+      - DB_MAX_POOL_SIZE=${DB_MAX_POOL_SIZE:-30}
+
+      # SMTP Configuration
+      - NC_SMTP_HOST=${SMTP_HOST}
+      - NC_SMTP_PORT=${SMTP_PORT}
+      - NC_SMTP_USERNAME=${SMTP_USER}
+      - NC_SMTP_PASSWORD=${SMTP_PASSWORD}
+      - NC_SMTP_SECURE=${SMTP_TLS}
+      - NC_SMTP_IGNORE_TLS=${SMTP_CERTCHECK}
+      - NC_SMTP_FROM=${SMTP_FROM_NAME} <${SMTP_FROM}>
+
+      # Attachment Settings
+      - NC_ATTACHMENT_FIELD_SIZE=${NC_ATTACHMENT_FIELD_SIZE:-262144000}
+      - NC_MAX_ATTACHMENTS_ALLOWED=${NC_MAX_ATTACHMENTS_ALLOWED:-50}
+    expose:
+      - 8080/tcp
+    labels:
+      - "traefik.enable=true"
+
+      # Middleware: IP Whitelist
+      - "traefik.http.middlewares.${STACK_NAME}-whitelist.ipWhiteList.sourcerange=${IP_WHITELIST}"
+
+      # Router: HTTP with IP Whitelist
+      - "traefik.http.routers.${STACK_NAME}-web.rule=Host(`${SERVICE_HOSTNAME}`)"
+      - "traefik.http.routers.${STACK_NAME}-web.entrypoints=web"
+      - "traefik.http.routers.${STACK_NAME}-web.middlewares=${STACK_NAME}-whitelist"
+      - "traefik.http.routers.${STACK_NAME}-web.service=${STACK_NAME}"
+
+      # Service
+      - "traefik.http.services.${STACK_NAME}.loadBalancer.server.port=8080"
+    volumes:
+      - nocodb-data:/usr/app/data
+    depends_on:
+      database-server:
+        condition: service_healthy
+    networks:
+      local:
+      proxy:
+        aliases:
+          - "${SERVICE_HOSTNAME}.internal"
+
+
+  ### PostgreSQL Database ###
+  # Tuned for SSD/NVMe by default
+  # For HDD: Set PG_RANDOM_PAGE_COST=2.0, PG_EFFECTIVE_IO_CONCURRENCY=4 in .env
+  database-server:
+    image: postgres:${POSTGRES_VERSION:-18}
+    restart: unless-stopped
+    container_name: ${STACK_NAME}_DATABASE
+    command: >
+      -c max_connections=${DATABASE_POOLMAXSIZE:-40}
+      -c shared_buffers=${PG_SHARED_BUFFERS:-2GB}
+      -c work_mem=${PG_WORK_MEM:-8MB}
+      -c effective_cache_size=${PG_EFFECTIVE_CACHE_SIZE:-4GB}
+      -c maintenance_work_mem=${PG_MAINTENANCE_WORK_MEM:-256MB}
+      -c max_wal_size=${PG_MAX_WAL_SIZE:-2GB}
+      -c min_wal_size=${PG_MIN_WAL_SIZE:-512MB}
+      -c random_page_cost=${PG_RANDOM_PAGE_COST:-1.1}
+      -c seq_page_cost=1.0
+      -c effective_io_concurrency=${PG_EFFECTIVE_IO_CONCURRENCY:-200}
+      -c max_parallel_workers_per_gather=2
+      -c max_parallel_workers=4
+      -c max_parallel_maintenance_workers=2
+      -c checkpoint_completion_target=0.9
+      -c wal_buffers=16MB
+      -c default_statistics_target=100
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nocodb -d nocodb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+    environment:
+      - TZ=${TIME_ZONE:-Etc/UTC}
+      - PG_TZ=${TIME_ZONE:-Etc/UTC}
+      - POSTGRES_DB=nocodb
+      - POSTGRES_USER=nocodb
+      - POSTGRES_PASSWORD=${DATABASE_PASSWORD}
+    expose:
+      - 5432/tcp
+    volumes:
+      - database-server:/var/lib/postgresql
+    networks:
+      local:
+
+
+### Volumes ###
+volumes:
+  nocodb-data:
+    driver: local
+    name: ${STACK_NAME}-nocodb
+
+  database-server:
+    driver: local
+    name: ${STACK_NAME}-postgres
+
+
+### Networks ###
+networks:
+  local:
+    driver: bridge
+    name: ${STACK_NAME}
+    enable_ipv6: true
+    ipam:
+      config:
+        - subnet: 10.67.${PRIVATESUBNET}.0/24
+          gateway: 10.67.${PRIVATESUBNET}.1
+        - subnet: fdfd:10:67:${PRIVATESUBNET}::/64
+          gateway: fdfd:10:67:${PRIVATESUBNET}::1
+
+  proxy:
+    name: ${PROXY_NETWORK}
+    external: true
