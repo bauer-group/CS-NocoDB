@@ -73,8 +73,8 @@ services:
       - "traefik.http.middlewares.${STACK_NAME}-redirect-to-secure.redirectscheme.scheme=https"
       - "traefik.http.middlewares.${STACK_NAME}-redirect-to-secure.redirectscheme.permanent=true"
 
-      # Middleware: Block all (for default route without valid header)
-      - "traefik.http.middlewares.${STACK_NAME}-forbidden.ipWhiteList.sourcerange=127.0.0.1/32,::1/128"
+      # Middleware: Block all (for default route without valid header) - Traefik v3
+      - "traefik.http.middlewares.${STACK_NAME}-forbidden.ipAllowList.sourcerange=127.0.0.1/32,::1/128"
 
       # Router: HTTP (redirect to HTTPS)
       - "traefik.http.routers.${STACK_NAME}-http.rule=Host(`${SERVICE_HOSTNAME}`)"
@@ -90,8 +90,8 @@ services:
       - "traefik.http.routers.${STACK_NAME}-https-default-forbidden.priority=1"
       - "traefik.http.routers.${STACK_NAME}-https-default-forbidden.middlewares=${STACK_NAME}-forbidden"
 
-      # Router: HTTPS with valid header (allowed)
-      - "traefik.http.routers.${STACK_NAME}-https-with-header.rule=Host(`${SERVICE_HOSTNAME}`) && HeadersRegexp(`X-BAUERGROUP-Auth`, `${HEADER_AUTH_SECRET}`)"
+      # Router: HTTPS with valid header (allowed) - Traefik v3
+      - "traefik.http.routers.${STACK_NAME}-https-with-header.rule=Host(`${SERVICE_HOSTNAME}`) && HeaderRegexp(`X-BAUERGROUP-Auth`, `^${HEADER_AUTH_SECRET}$`)"
       - "traefik.http.routers.${STACK_NAME}-https-with-header.entrypoints=web-secure"
       - "traefik.http.routers.${STACK_NAME}-https-with-header.tls=true"
       - "traefik.http.routers.${STACK_NAME}-https-with-header.tls.certresolver=letsencrypt"

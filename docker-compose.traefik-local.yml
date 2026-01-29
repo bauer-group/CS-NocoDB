@@ -62,8 +62,8 @@ services:
     labels:
       - "traefik.enable=true"
 
-      # Middleware: IP Whitelist
-      - "traefik.http.middlewares.${STACK_NAME}-whitelist.ipWhiteList.sourcerange=${IP_WHITELIST}"
+      # Middleware: IP Allowlist (Traefik v3)
+      - "traefik.http.middlewares.${STACK_NAME}-whitelist.ipAllowList.sourcerange=${IP_WHITELIST}"
 
       # Router: HTTP with IP Whitelist
       - "traefik.http.routers.${STACK_NAME}-web.rule=Host(`${SERVICE_HOSTNAME}`)"
