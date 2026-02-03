@@ -95,7 +95,6 @@ curl -H "X-BAUERGROUP-Auth: your-secret" https://db.example.com/api/v2/...
 | `STACK_NAME` | Eindeutiger Stack-Name | `db_crm_app_domain_com` |
 | `DATABASE_PASSWORD` | PostgreSQL Passwort | `openssl rand -base64 16` |
 | `TIME_ZONE` | Zeitzone | `Europe/Berlin` |
-| `PRIVATESUBNET` | Subnetz (1-254, eindeutig pro Stack) | `42` |
 
 ### Traefik-Konfiguration
 
@@ -321,11 +320,7 @@ NC_ATTACHMENT_EXPIRE_SECONDS=7200
 
 ### Netzwerk-Isolation
 
-Jeder Stack erhält ein isoliertes Netzwerk:
-- IPv4: `10.67.${PRIVATESUBNET}.0/24`
-- IPv6: `fdfd:10:67:${PRIVATESUBNET}::/64`
-
-Die Datenbank ist nur intern erreichbar (kein Port-Binding).
+Jeder Stack erhält ein eigenes isoliertes Bridge-Netzwerk mit IPv6-Unterstützung. Die Datenbank ist nur intern erreichbar (kein Port-Binding).
 
 ## Updates
 
@@ -401,9 +396,3 @@ Siehe [docs/AUDIT_CLEANUP.md](docs/AUDIT_CLEANUP.md#fix-auditmigration-fehler-nc
 ## Lizenz
 
 Dieses Docker-Setup ist frei verwendbar. NocoDB selbst unterliegt der [AGPL-3.0 Lizenz](https://github.com/nocodb/nocodb/blob/develop/LICENSE).
-
----
-
-**Version:** 2025-01-25
-**PostgreSQL:** 18
-**NocoDB:** latest

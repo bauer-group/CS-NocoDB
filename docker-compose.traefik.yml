@@ -155,12 +155,6 @@ networks:
     driver: bridge
     name: ${STACK_NAME}
     enable_ipv6: true
-    ipam:
-      config:
-        - subnet: 10.67.${PRIVATESUBNET}.0/24
-          gateway: 10.67.${PRIVATESUBNET}.1
-        - subnet: fdfd:10:67:${PRIVATESUBNET}::/64
-          gateway: fdfd:10:67:${PRIVATESUBNET}::1
 
   proxy:
     name: ${PROXY_NETWORK}
