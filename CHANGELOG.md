@@ -1,3 +1,9 @@
+## [0.3.0](https://github.com/bauer-group/CS-NocoDB/compare/v0.2.0...v0.3.0) (2026-01-29)
+
+### 🚀 Features
+
+* update Traefik middleware to use 'ipAllowList' for v3 compatibility ([e137d93](https://github.com/bauer-group/CS-NocoDB/commit/e137d934b0ffdb32703b17e1706c5cd8db782835))
+
 ## [0.2.0](https://github.com/bauer-group/CS-NocoDB/compare/v0.1.0...v0.2.0) (2026-01-25)
 
 ### 🚀 Features
