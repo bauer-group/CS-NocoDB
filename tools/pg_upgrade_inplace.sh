@@ -3,7 +3,7 @@
 # pg_upgrade_inplace.sh - PostgreSQL In-Place Major Version Upgrade
 # =============================================================================
 # Führt ein in-place Upgrade von PostgreSQL im selben Docker Volume durch.
-# Nutzt Hardlinks - benötigt keinen zusätzlichen Speicherplatz.
+# Standardmäßig werden Daten KOPIERT (sicher, aber benötigt doppelten Speicher).
 #
 # Nutzung:
 #   ./pg_upgrade_inplace.sh [OPTIONS] <VOLUME_PATH>
@@ -15,6 +15,7 @@
 #   --volume-name <NAME>  Docker Volume Name statt Pfad
 #   --dry-run             Nur prüfen, nichts ändern
 #   --force               Keine Bestätigung abfragen
+#   --link                Hardlinks statt Kopie (schnell, KEIN Rollback möglich!)
 #   --help                Diese Hilfe anzeigen
 #
 # Beispiele:
@@ -35,12 +36,14 @@ set -euo pipefail
 # =============================================================================
 MAJOR_OLD="${MAJOR_OLD:-15}"
 MAJOR_NEW="${MAJOR_NEW:-18}"
-PG_UID="${PG_UID:-999}"
-PG_GID="${PG_GID:-999}"
+PG_UID=""  # Wird aus bestehenden Daten ausgelesen
+PG_GID=""  # Wird aus bestehenden Daten ausgelesen
 PG_USER="${PG_USER:-nocodb}"
 PG_DATABASE="${PG_DATABASE:-nocodb}"
 DRY_RUN=false
 FORCE=false
+USE_LINK=false
+NO_CHECKSUMS=true  # Standard: Checksums deaktivieren (Kompatibilität mit älteren Clustern)
 VOLUME_NAME=""
 VOL_DIR=""
 
@@ -110,6 +113,10 @@ while [[ $# -gt 0 ]]; do
             FORCE=true
             shift
             ;;
+        --link)
+            USE_LINK=true
+            shift
+            ;;
         --help|-h)
             usage
             ;;
@@ -176,6 +183,11 @@ else
     die "PG_VERSION nicht gefunden in ${DATA_DIR}"
 fi
 
+# UID/GID aus bestehenden Daten auslesen
+PG_UID=$(stat -c '%u' "${DATA_DIR}/PG_VERSION" 2>/dev/null) || PG_UID=999
+PG_GID=$(stat -c '%g' "${DATA_DIR}/PG_VERSION" 2>/dev/null) || PG_GID=999
+log_info "Erkannte Eigentümer: UID=${PG_UID}, GID=${PG_GID}"
+
 # Backup-Verzeichnis existiert bereits?
 if [[ -e "${V_OLD_DIR}" ]]; then
     die "Verzeichnis ${V_OLD_DIR} existiert bereits – bitte löschen oder umbenennen."
@@ -189,10 +201,22 @@ if [[ -n "${RUNNING_CONTAINERS}" ]]; then
 fi
 log_info "Keine laufenden Container gefunden ✓"
 
-# Speicherplatz prüfen (für Logs, mindestens 100MB frei)
+# Speicherplatz prüfen
 AVAILABLE_KB=$(df -k "${VOL_DIR}" | tail -1 | awk '{print $4}')
-if [[ ${AVAILABLE_KB} -lt 102400 ]]; then
-    log_warn "Weniger als 100MB freier Speicher verfügbar"
+DATA_SIZE_KB=$(du -sk "${DATA_DIR}" 2>/dev/null | awk '{print $1}' || echo "0")
+
+if [[ "${USE_LINK}" == "false" ]]; then
+    # Copy-Modus: benötigt genug Platz für komplette Datenkopie
+    NEEDED_KB=$((DATA_SIZE_KB + 102400))  # Daten + 100MB Puffer
+    if [[ ${AVAILABLE_KB} -lt ${NEEDED_KB} ]]; then
+        die "Nicht genug Speicherplatz für Copy-Modus!\n  Benötigt: ~$((NEEDED_KB / 1024)) MB\n  Verfügbar: $((AVAILABLE_KB / 1024)) MB\n\nOptionen:\n  1. Speicher freigeben\n  2. --link verwenden (ACHTUNG: kein Rollback möglich!)"
+    fi
+    log_info "Speicherplatz ausreichend: $((AVAILABLE_KB / 1024)) MB frei, ~$((DATA_SIZE_KB / 1024)) MB benötigt ✓"
+else
+    # Link-Modus: nur minimaler Platz für Logs nötig
+    if [[ ${AVAILABLE_KB} -lt 102400 ]]; then
+        log_warn "Weniger als 100MB freier Speicher verfügbar"
+    fi
 fi
 
 # Helper-Image verfügbar?
@@ -216,14 +240,23 @@ echo "════════════════════════�
 echo " UPGRADE-PLAN"
 echo "═══════════════════════════════════════════════════════════════════════════"
 echo ""
-echo "  Quell-Version:    PostgreSQL ${MAJOR_OLD} (${OLD_VER})"
-echo "  Ziel-Version:     PostgreSQL ${MAJOR_NEW}"
-echo "  Volume-Pfad:      ${VOL_DIR}"
-echo "  Aktueller Cluster: ${DATA_DIR}"
-echo "  Backup nach:      ${V_OLD_DIR}"
-echo "  Helper-Image:     ${HELPER_IMAGE}"
+echo "  Quell-Version:     PostgreSQL ${MAJOR_OLD} (${OLD_VER})"
+echo "  Ziel-Version:      PostgreSQL ${MAJOR_NEW}"
+echo "  Volume-Pfad:       ${VOL_DIR}"
+echo "  Helper-Image:      ${HELPER_IMAGE}"
 echo ""
-echo "  Methode: Hardlinks (kein zusätzlicher Speicher benötigt)"
+echo "  Verzeichnisstruktur VORHER:"
+echo "    ${DATA_DIR}/                        ← PG ${MAJOR_OLD} Daten"
+echo ""
+echo "  Verzeichnisstruktur NACHHER:"
+echo "    ${DATA_DIR}/${MAJOR_NEW}/docker/    ← PG ${MAJOR_NEW} Daten"
+echo "    ${V_OLD_DIR}/                       ← PG ${MAJOR_OLD} Backup"
+echo ""
+if [[ "${USE_LINK}" == "true" ]]; then
+    echo "  Methode: Hardlinks (schnell, KEIN Rollback nach Start möglich!)"
+else
+    echo "  Methode: Kopie (sicher, Rollback jederzeit möglich)"
+fi
 echo ""
 echo "═══════════════════════════════════════════════════════════════════════════"
 
@@ -287,11 +320,28 @@ fi
 log "Schritt 3/4: Starte pg_upgrade..."
 echo "--- pg_upgrade Start: $(date) ---" >> "${LOG_FILE}"
 
+# pg_upgrade Optionen
+PG_UPGRADE_OPTS=""
+if [[ "${USE_LINK}" == "true" ]]; then
+    PG_UPGRADE_OPTS="--link"
+    log_warn "ACHTUNG: Hardlink-Modus aktiv - nach erstem Start ist KEIN Rollback mehr möglich!"
+fi
+
+# initdb Optionen für neuen Cluster
+INITDB_ARGS="--username=${PG_USER}"
+if [[ "${NO_CHECKSUMS}" == "true" ]]; then
+    INITDB_ARGS="${INITDB_ARGS} --no-data-checksums"
+    log_info "Checksums deaktiviert (Kompatibilität mit altem Cluster)"
+fi
+log_info "Neuer Cluster wird mit Superuser '${PG_USER}' initialisiert"
+
 if ! docker run --rm \
     -e PGUSER="${PG_USER}" \
-    -v "${V_OLD_DIR}:/var/lib/postgresql/old/data:ro" \
-    -v "${DATA_DIR}:/var/lib/postgresql/new/data" \
-    "${HELPER_IMAGE}" 2>&1 | tee -a "${LOG_FILE}"; then
+    -e POSTGRES_USER="${PG_USER}" \
+    -e POSTGRES_INITDB_ARGS="${INITDB_ARGS}" \
+    -v "${DATA_DIR}:/var/lib/postgresql" \
+    -v "${V_OLD_DIR}:/var/lib/postgresql/${MAJOR_OLD}/data" \
+    "${HELPER_IMAGE}" ${PG_UPGRADE_OPTS} 2>&1 | tee -a "${LOG_FILE}"; then
 
     echo ""
     log_warn "pg_upgrade fehlgeschlagen!"
@@ -310,21 +360,84 @@ echo "--- pg_upgrade Ende: $(date) ---" >> "${LOG_FILE}"
 # Schritt 4: Erfolg prüfen
 log "Schritt 4/4: Verifiziere neuen Cluster..."
 
-if [[ ! -f "${DATA_DIR}/PG_VERSION" ]]; then
+# Neuer PGDATA Pfad (tianon-Image erstellt /var/lib/postgresql/18/docker)
+NEW_PGDATA="${DATA_DIR}/${MAJOR_NEW}/docker"
+
+if [[ ! -f "${NEW_PGDATA}/PG_VERSION" ]]; then
     log_warn "PG_VERSION fehlt im neuen Cluster!"
+    log_warn "Erwartet: ${NEW_PGDATA}/PG_VERSION"
     log_warn "Rollback wird durchgeführt..."
 
-    rm -rf "${DATA_DIR}"
+    rm -rf "${DATA_DIR}/${MAJOR_NEW}"
     mv "${V_OLD_DIR}" "${DATA_DIR}"
 
     die "Upgrade fehlgeschlagen: Neuer Cluster unvollständig"
 fi
 
-NEW_VER="$(tr -d '[:space:]' < "${DATA_DIR}/PG_VERSION")"
-log_info "Neuer Cluster erstellt (PG_VERSION: ${NEW_VER})"
+NEW_VER="$(tr -d '[:space:]' < "${NEW_PGDATA}/PG_VERSION")"
+log_info "Neuer Cluster erstellt: ${NEW_PGDATA} (PG_VERSION: ${NEW_VER})"
+
+# Daten bleiben in _data/18/docker/ - dort erwartet PG18 sie!
+
+# pg_hba.conf vom alten Cluster übernehmen (Authentifizierungseinstellungen)
+OLD_PG_HBA="${V_OLD_DIR}/pg_hba.conf"
+NEW_PG_HBA="${NEW_PGDATA}/pg_hba.conf"
+if [[ -f "${OLD_PG_HBA}" ]]; then
+    log_info "Kopiere pg_hba.conf vom alten Cluster..."
+    cp "${OLD_PG_HBA}" "${NEW_PG_HBA}"
+    log_info "pg_hba.conf übernommen ✓"
+else
+    log_warn "Keine pg_hba.conf im alten Cluster gefunden: ${OLD_PG_HBA}"
+fi
 
 # Eigentümer sicherstellen
 chown -R "${PG_UID}:${PG_GID}" "${DATA_DIR}"
+
+# Schritt 5/5: Statistiken aktualisieren (vacuumdb)
+log "Schritt 5/5: Aktualisiere Statistiken (vacuumdb)..."
+TEMP_CONTAINER="pg_upgrade_vacuum_$$"
+
+# Temporären PostgreSQL-Container starten (existierender Cluster, kein initdb)
+# Das postgres-Image erkennt existierende Daten und startet direkt ohne initdb
+log_info "Starte temporären PostgreSQL ${MAJOR_NEW} Container..."
+if docker run -d --rm \
+    --name "${TEMP_CONTAINER}" \
+    -e PGDATA="/var/lib/postgresql/${MAJOR_NEW}/docker" \
+    -v "${DATA_DIR}:/var/lib/postgresql" \
+    "postgres:${MAJOR_NEW}" >/dev/null 2>&1; then
+
+    # Warten bis PostgreSQL bereit ist
+    log_info "Warte auf PostgreSQL..."
+    WAIT_COUNT=0
+    while ! docker exec "${TEMP_CONTAINER}" pg_isready -U "${PG_USER}" >/dev/null 2>&1; do
+        sleep 1
+        WAIT_COUNT=$((WAIT_COUNT + 1))
+        if [[ ${WAIT_COUNT} -ge 30 ]]; then
+            log_warn "Timeout beim Warten auf PostgreSQL - überspringe vacuumdb"
+            docker stop "${TEMP_CONTAINER}" >/dev/null 2>&1 || true
+            break
+        fi
+    done
+
+    if [[ ${WAIT_COUNT} -lt 30 ]]; then
+        log_info "PostgreSQL bereit, führe vacuumdb aus..."
+        if docker exec "${TEMP_CONTAINER}" vacuumdb \
+            --all \
+            --analyze-in-stages \
+            --username="${PG_USER}" 2>&1 | tee -a "${LOG_FILE}"; then
+            log_info "vacuumdb erfolgreich ✓"
+        else
+            log_warn "vacuumdb fehlgeschlagen (nicht kritisch)"
+        fi
+
+        # Container stoppen
+        log_info "Stoppe temporären Container..."
+        docker stop "${TEMP_CONTAINER}" >/dev/null 2>&1 || true
+    fi
+else
+    log_warn "Konnte temporären Container nicht starten - überspringe vacuumdb"
+    log_warn "Führe nach dem ersten Start manuell aus: vacuumdb --all --analyze-in-stages"
+fi
 
 # Erfolgs-Marker
 touch "${LOG_ROOT}/markers/upgraded_${MAJOR_OLD}_to_${MAJOR_NEW}.ok"
@@ -339,24 +452,53 @@ echo "════════════════════════�
 echo " UPGRADE ERFOLGREICH"
 echo "═══════════════════════════════════════════════════════════════════════════"
 echo ""
-echo "  Aktiver Cluster (neu):  ${DATA_DIR}  (PostgreSQL ${NEW_VER})"
+echo "  Neuer Cluster:          ${NEW_PGDATA}  (PostgreSQL ${NEW_VER})"
 echo "  Backup (alt):           ${V_OLD_DIR}  (PostgreSQL ${OLD_VER})"
 echo "  Log-Datei:              ${LOG_FILE}"
+if [[ "${USE_LINK}" == "true" ]]; then
+    echo ""
+    echo "  ⚠️  HARDLINK-MODUS: Nach dem ersten Start des neuen Clusters"
+    echo "     ist ein Rollback NICHT mehr möglich!"
+else
+    echo ""
+    echo "  ✅ COPY-MODUS: Rollback jederzeit möglich (vor UND nach Start)"
+fi
+echo ""
+echo "═══════════════════════════════════════════════════════════════════════════"
+echo ""
+echo "  Host-Struktur:"
+echo "    _data/${MAJOR_NEW}/docker/    ← PG ${MAJOR_NEW} Daten"
+echo ""
+echo "  docker-compose.yml anpassen:"
+echo "    image: postgres:${MAJOR_NEW}"
+echo "    volumes:"
+echo "      - postgres-data:/var/lib/postgresql        # War: /var/lib/postgresql/data"
+echo "    environment:"
+echo "      - PGDATA=/var/lib/postgresql/${MAJOR_NEW}/docker"
 echo ""
 echo "═══════════════════════════════════════════════════════════════════════════"
 echo ""
 echo "Nächste Schritte:"
 echo ""
-echo "  1. Container starten:"
-echo "     docker compose up -d"
+echo "  1. docker-compose.yml anpassen (siehe oben)"
 echo ""
-echo "  2. Statistiken aktualisieren (empfohlen):"
-echo "     docker exec <container> vacuumdb --all --analyze-in-stages"
+echo "  2. Container starten:"
+echo "     docker compose up -d"
 echo ""
 echo "  3. Extensions aktualisieren (falls genutzt):"
 echo "     docker exec <container> psql -U ${PG_USER} -d ${PG_DATABASE} -c 'ALTER EXTENSION <name> UPDATE;'"
 echo ""
-echo "  4. Nach erfolgreicher Prüfung - Backup löschen (optional):"
+if [[ "${USE_LINK}" == "false" ]]; then
+    echo "  4. Falls Rollback nötig:"
+    echo "     docker compose down"
+    echo "     rm -rf \"${DATA_DIR}/${MAJOR_NEW}\""
+    echo "     mv \"${V_OLD_DIR}\" \"${DATA_DIR}\""
+    echo "     # docker-compose.yml: Mount zurück auf /var/lib/postgresql/data"
+    echo ""
+    echo "  5. Nach erfolgreicher Prüfung - Backup löschen (optional):"
+else
+    echo "  4. Nach erfolgreicher Prüfung - Backup löschen (optional):"
+fi
 echo "     rm -rf \"${V_OLD_DIR}\""
 echo ""
 echo "═══════════════════════════════════════════════════════════════════════════"
