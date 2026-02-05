@@ -327,6 +327,8 @@ Typische Ursachen und Lösungen:
 
 | Variable | Beschreibung | Standard |
 |----------|--------------|----------|
+| `PG_USER` | PostgreSQL-Benutzer für pg_upgrade | nocodb |
+| `PG_DATABASE` | PostgreSQL-Datenbank | nocodb |
 | `PG_UID` | User-ID für PostgreSQL-Dateien | 999 |
 | `PG_GID` | Group-ID für PostgreSQL-Dateien | 999 |
 | `MAJOR_OLD` | Quell-Version (Alternative zu --from) | 15 |
@@ -334,7 +336,15 @@ Typische Ursachen und Lösungen:
 
 Beispiel:
 ```bash
-sudo PG_UID=1000 PG_GID=1000 MAJOR_OLD=14 MAJOR_NEW=17 \
+# Standard (nocodb)
+sudo ./pg_upgrade_inplace.sh --volume-name mystack-postgres
+
+# Mit anderen Datenbank-Credentials
+sudo PG_USER=myuser PG_DATABASE=mydb \
+    ./pg_upgrade_inplace.sh --volume-name mystack-postgres
+
+# Alle Optionen kombiniert
+sudo PG_USER=nocodb PG_DATABASE=nocodb PG_UID=1000 PG_GID=1000 MAJOR_OLD=14 MAJOR_NEW=17 \
     ./pg_upgrade_inplace.sh --volume-name mystack-postgres
 ```
 
