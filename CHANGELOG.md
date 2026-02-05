@@ -1,3 +1,9 @@
+## [0.5.0](https://github.com/bauer-group/CS-NocoDB/compare/v0.4.0...v0.5.0) (2026-02-05)
+
+### 🚀 Features
+
+* enhance pg_upgrade_inplace.sh with error handling and user-configurable variables ([e5ed413](https://github.com/bauer-group/CS-NocoDB/commit/e5ed413fd32960739b62372b4d0b12a9936355ce))
+
 ## [0.4.0](https://github.com/bauer-group/CS-NocoDB/compare/v0.3.0...v0.4.0) (2026-02-03)
 
 ### 🚀 Features
