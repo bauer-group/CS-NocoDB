@@ -1,3 +1,9 @@
+## [0.4.0](https://github.com/bauer-group/CS-NocoDB/compare/v0.3.0...v0.4.0) (2026-02-03)
+
+### 🚀 Features
+
+* remove private subnet configuration from environment and Docker Compose files ([c36a684](https://github.com/bauer-group/CS-NocoDB/commit/c36a6844addf972e70140a560ad93f7ab067ed8d))
+
 ## [0.3.0](https://github.com/bauer-group/CS-NocoDB/compare/v0.2.0...v0.3.0) (2026-01-29)
 
 ### 🚀 Features
