@@ -37,6 +37,8 @@ MAJOR_OLD="${MAJOR_OLD:-15}"
 MAJOR_NEW="${MAJOR_NEW:-18}"
 PG_UID="${PG_UID:-999}"
 PG_GID="${PG_GID:-999}"
+PG_USER="${PG_USER:-nocodb}"
+PG_DATABASE="${PG_DATABASE:-nocodb}"
 DRY_RUN=false
 FORCE=false
 VOLUME_NAME=""
@@ -141,7 +143,9 @@ if [[ -z "${VOL_DIR}" ]]; then
     exit 1
 fi
 
-VOL_DIR="$(readlink -f "${VOL_DIR}")"
+VOL_DIR="$(readlink -f "${VOL_DIR}" 2>/dev/null)" || die "Ungültiger Volume-Pfad: ${VOL_DIR}"
+[[ -n "${VOL_DIR}" ]] || die "Volume-Pfad konnte nicht aufgelöst werden"
+[[ -d "${VOL_DIR}" ]] || die "Volume-Verzeichnis existiert nicht: ${VOL_DIR}"
 DATA_DIR="${VOL_DIR}/_data"
 V_OLD_DIR="${VOL_DIR}/v${MAJOR_OLD}"
 HELPER_IMAGE="tianon/postgres-upgrade:${MAJOR_OLD}-to-${MAJOR_NEW}"
@@ -243,7 +247,12 @@ fi
 # Logging Setup
 # =============================================================================
 LOG_ROOT="/var/lib/docker/pg-upgrade-$(basename "${VOL_DIR}")"
-mkdir -p "${LOG_ROOT}"/{logs,markers}
+if ! mkdir -p "${LOG_ROOT}"/{logs,markers} 2>/dev/null; then
+    # Fallback zu temporärem Verzeichnis wenn /var/lib/docker nicht schreibbar
+    LOG_ROOT="/tmp/pg-upgrade-$(basename "${VOL_DIR}")"
+    mkdir -p "${LOG_ROOT}"/{logs,markers} || die "Kann Log-Verzeichnis nicht erstellen: ${LOG_ROOT}"
+    log_warn "Verwende Fallback Log-Verzeichnis: ${LOG_ROOT}"
+fi
 LOG_FILE="${LOG_ROOT}/logs/pg_upgrade_${MAJOR_OLD}_to_${MAJOR_NEW}_$(date +%Y%m%d_%H%M%S).log"
 
 log "Log-Datei: ${LOG_FILE}"
@@ -255,19 +264,31 @@ UPGRADE_STARTED=true
 
 # Schritt 1: Alte Daten verschieben
 log "Schritt 1/4: Verschiebe ${DATA_DIR} → ${V_OLD_DIR} (Backup)..."
-mv "${DATA_DIR}" "${V_OLD_DIR}"
+if ! mv "${DATA_DIR}" "${V_OLD_DIR}"; then
+    die "Konnte Datenverzeichnis nicht verschieben: ${DATA_DIR} → ${V_OLD_DIR}"
+fi
 
 # Schritt 2: Neues Verzeichnis vorbereiten
 log "Schritt 2/4: Erstelle neues _data Verzeichnis..."
-mkdir -p "${DATA_DIR}"
-chown -R "${PG_UID}:${PG_GID}" "${V_OLD_DIR}" "${DATA_DIR}"
+if ! mkdir -p "${DATA_DIR}"; then
+    log_warn "mkdir fehlgeschlagen - führe Rollback durch..."
+    mv "${V_OLD_DIR}" "${DATA_DIR}" 2>/dev/null || true
+    die "Konnte neues Datenverzeichnis nicht erstellen: ${DATA_DIR}"
+fi
+
+if ! chown -R "${PG_UID}:${PG_GID}" "${V_OLD_DIR}" "${DATA_DIR}"; then
+    log_warn "chown fehlgeschlagen - führe Rollback durch..."
+    rm -rf "${DATA_DIR}"
+    mv "${V_OLD_DIR}" "${DATA_DIR}" 2>/dev/null || true
+    die "Konnte Eigentümer nicht setzen für: ${V_OLD_DIR}, ${DATA_DIR}"
+fi
 
 # Schritt 3: pg_upgrade ausführen
 log "Schritt 3/4: Starte pg_upgrade..."
 echo "--- pg_upgrade Start: $(date) ---" >> "${LOG_FILE}"
 
 if ! docker run --rm \
-    -e PGUSER=nocodb \
+    -e PGUSER="${PG_USER}" \
     -v "${V_OLD_DIR}:/var/lib/postgresql/old/data:ro" \
     -v "${DATA_DIR}:/var/lib/postgresql/new/data" \
     "${HELPER_IMAGE}" 2>&1 | tee -a "${LOG_FILE}"; then
@@ -333,7 +354,7 @@ echo "  2. Statistiken aktualisieren (empfohlen):"
 echo "     docker exec <container> vacuumdb --all --analyze-in-stages"
 echo ""
 echo "  3. Extensions aktualisieren (falls genutzt):"
-echo "     docker exec <container> psql -U nocodb -d nocodb -c 'ALTER EXTENSION <name> UPDATE;'"
+echo "     docker exec <container> psql -U ${PG_USER} -d ${PG_DATABASE} -c 'ALTER EXTENSION <name> UPDATE;'"
 echo ""
 echo "  4. Nach erfolgreicher Prüfung - Backup löschen (optional):"
 echo "     rm -rf \"${V_OLD_DIR}\""
