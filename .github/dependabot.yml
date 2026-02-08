@@ -1,7 +1,7 @@
 # =============================================================================
 # Dependabot Configuration
 # =============================================================================
-# Monitors Docker base images for updates
+# Monitors Docker base images and GitHub Actions for updates
 # Combined with docker-maintenance.yml workflow for auto-merge and release
 # =============================================================================
 
@@ -21,3 +21,33 @@ updates:
       - "dependabot"
     commit-message:
       prefix: "chore(ci)"
+
+  # Docker base image updates - n8n
+  - package-ecosystem: "docker"
+    directory: "/src/n8n"
+    schedule:
+      interval: "weekly"
+      day: "sunday"
+      time: "06:30"
+      timezone: "Etc/UTC"
+    labels:
+      - "dependencies"
+      - "docker"
+      - "dependabot"
+    commit-message:
+      prefix: "chore(docker)"
+
+  # Docker base image updates - Runner
+  - package-ecosystem: "docker"
+    directory: "/src/runner"
+    schedule:
+      interval: "weekly"
+      day: "sunday"
+      time: "06:30"
+      timezone: "Etc/UTC"
+    labels:
+      - "dependencies"
+      - "docker"
+      - "dependabot"
+    commit-message:
+      prefix: "chore(docker)"
