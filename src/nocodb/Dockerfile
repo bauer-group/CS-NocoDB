@@ -32,7 +32,7 @@ LABEL maintainer="Karl Bauer <karl.bauer@bauer-group.com>"
 # ───────────────────────────────────────────────────────────────────────────────
 LABEL org.opencontainers.image.title="NocoDB"
 LABEL org.opencontainers.image.description="NocoDB - Open Source Airtable Alternative - BAUER GROUP Edition"
-LABEL org.opencontainers.image.version="0.1.0"
+LABEL org.opencontainers.image.version="0.6.0"
 LABEL org.opencontainers.image.vendor="BAUER GROUP"
 LABEL org.opencontainers.image.authors="Karl Bauer <karl.bauer@bauer-group.com>"
 LABEL org.opencontainers.image.licenses="AGPL-3.0"
