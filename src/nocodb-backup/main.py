@@ -220,6 +220,7 @@ def run_backup(settings: Settings, db_only: bool = False) -> bool:
             local_path=local_path,
             s3_path=s3_path,
             database_dump_size=dump_size,
+            file_backup_size=file_backup_size,
             errors=errors if errors else None,
         )
 
@@ -240,6 +241,7 @@ def run_backup(settings: Settings, db_only: bool = False) -> bool:
                 local_path=local_path,
                 s3_path=s3_path,
                 database_dump_size=dump_size or 0,
+                file_backup_size=file_backup_size or 0,
             )
         elif bases_count > 0 or dump_file:
             # Partial success
@@ -255,6 +257,7 @@ def run_backup(settings: Settings, db_only: bool = False) -> bool:
                 local_path=local_path,
                 s3_path=s3_path,
                 database_dump_size=dump_size or 0,
+                file_backup_size=file_backup_size or 0,
             )
         else:
             # Complete failure

@@ -88,6 +88,7 @@ def print_summary(
     local_path: str | None = None,
     s3_path: str | None = None,
     database_dump_size: int | None = None,
+    file_backup_size: int | None = None,
     errors: list[str] | None = None,
 ) -> None:
     """Print backup summary."""
@@ -100,6 +101,8 @@ def print_summary(
     table.add_row("Records", str(records_count))
     if database_dump_size is not None:
         table.add_row("Database Dump", format_size(database_dump_size))
+    if file_backup_size is not None:
+        table.add_row("Data Files", format_size(file_backup_size))
     table.add_row("Total Size", format_size(total_size))
     table.add_row("Duration", f"{duration:.1f}s")
     if local_path:

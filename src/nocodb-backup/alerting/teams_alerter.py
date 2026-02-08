@@ -72,6 +72,9 @@ class TeamsAlerter(Alerter):
         if alert.database_dump_size > 0:
             facts.append({"title": "Database Dump", "value": format_size(alert.database_dump_size)})
 
+        if alert.file_backup_size > 0:
+            facts.append({"title": "Data Files", "value": format_size(alert.file_backup_size)})
+
         if alert.total_size > 0:
             facts.append({"title": "Total Size", "value": format_size(alert.total_size)})
 

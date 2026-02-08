@@ -26,6 +26,7 @@ class BackupAlert:
     local_path: str | None = None
     s3_path: str | None = None
     database_dump_size: int = 0
+    file_backup_size: int = 0
     error_messages: list[str] = field(default_factory=list)
 
 

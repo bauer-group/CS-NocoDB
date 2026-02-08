@@ -45,6 +45,7 @@ class WebhookAlerter(Alerter):
                 "local_path": alert.local_path,
                 "s3_path": alert.s3_path,
                 "database_dump_size": alert.database_dump_size,
+                "file_backup_size": alert.file_backup_size,
                 "error_messages": alert.error_messages,
             }
 

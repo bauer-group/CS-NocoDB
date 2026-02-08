@@ -105,6 +105,9 @@ class EmailAlerter(Alerter):
         if alert.database_dump_size > 0:
             lines.append(f"Database Dump: {format_size(alert.database_dump_size)}")
 
+        if alert.file_backup_size > 0:
+            lines.append(f"Data Files: {format_size(alert.file_backup_size)}")
+
         if alert.total_size > 0:
             lines.append(f"Total Size: {format_size(alert.total_size)}")
 
@@ -172,6 +175,14 @@ class EmailAlerter(Alerter):
                     <tr>
                         <td style="padding: 8px; border-bottom: 1px solid #dee2e6;"><strong>Database Dump</strong></td>
                         <td style="padding: 8px; border-bottom: 1px solid #dee2e6;">{format_size(alert.database_dump_size)}</td>
+                    </tr>
+            """
+
+        if alert.file_backup_size > 0:
+            html += f"""
+                    <tr>
+                        <td style="padding: 8px; border-bottom: 1px solid #dee2e6;"><strong>Data Files</strong></td>
+                        <td style="padding: 8px; border-bottom: 1px solid #dee2e6;">{format_size(alert.file_backup_size)}</td>
                     </tr>
             """
 

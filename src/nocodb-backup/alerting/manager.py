@@ -109,6 +109,7 @@ class AlertManager:
         local_path: str | None,
         s3_path: str | None,
         database_dump_size: int,
+        file_backup_size: int = 0,
     ) -> dict[str, bool]:
         """Send success alert."""
         alert = BackupAlert(
@@ -124,6 +125,7 @@ class AlertManager:
             local_path=local_path,
             s3_path=s3_path,
             database_dump_size=database_dump_size,
+            file_backup_size=file_backup_size,
         )
         return self._send_alert(alert)
 
@@ -140,6 +142,7 @@ class AlertManager:
         local_path: str | None,
         s3_path: str | None,
         database_dump_size: int,
+        file_backup_size: int = 0,
     ) -> dict[str, bool]:
         """Send warning alert."""
         alert = BackupAlert(
@@ -156,6 +159,7 @@ class AlertManager:
             local_path=local_path,
             s3_path=s3_path,
             database_dump_size=database_dump_size,
+            file_backup_size=file_backup_size,
         )
         return self._send_alert(alert)
 
