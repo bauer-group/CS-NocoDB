@@ -30,7 +30,7 @@ LABEL org.opencontainers.image.source="https://github.com/bauer-group/CS-NocoDB"
 LABEL org.opencontainers.image.url="https://github.com/bauer-group/CS-NocoDB"
 LABEL org.opencontainers.image.documentation="https://github.com/bauer-group/CS-NocoDB#readme"
 LABEL org.opencontainers.image.description="Database initialization for NocoDB Stack"
-LABEL org.opencontainers.image.version="0.6.0"
+LABEL org.opencontainers.image.version="0.6.1"
 
 # Python unbuffered output - ensures immediate visibility in Docker logs
 ENV PYTHONUNBUFFERED=1

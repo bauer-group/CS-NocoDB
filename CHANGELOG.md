@@ -1,3 +1,9 @@
+## [0.6.1](https://github.com/bauer-group/CS-NocoDB/compare/v0.6.0...v0.6.1) (2026-02-08)
+
+### 🐛 Bug Fixes
+
+* Korrigiere Schreibfehler in den deutschen Kommentaren und Dokumentationen ([0e44ac4](https://github.com/bauer-group/CS-NocoDB/commit/0e44ac4edf4600c8fed1b0de5960c45828e3ca36))
+
 ## [0.6.0](https://github.com/bauer-group/CS-NocoDB/compare/v0.5.0...v0.6.0) (2026-02-08)
 
 ### 🚀 Features
