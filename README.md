@@ -209,11 +209,12 @@ NocoDB/
 │   ├── nocodb/                           # NocoDB Base Image (Custom Build)
 │   │   └── Dockerfile
 │   │
-│   ├── nocodb-init/                      # Init Container (Collation Check)
+│   ├── nocodb-init/                      # Init Container (DB-Wartung)
 │   │   ├── Dockerfile
 │   │   ├── main.py
 │   │   └── tasks/
-│   │       └── 01_collation_check.py
+│   │       ├── 01_collation_check.py
+│   │       └── 02_audit_cleanup.py
 │   │
 │   └── nocodb-backup/                    # Backup Sidecar Container
 │       ├── Dockerfile
@@ -224,7 +225,8 @@ NocoDB/
 │       ├── scheduler.py                  # Cron/Interval Scheduler
 │       ├── backup/                       # Backup-Module
 │       │   ├── pg_dump.py               # PostgreSQL Dump
-│       │   └── nocodb_exporter.py       # NocoDB API Export
+│       │   ├── nocodb_exporter.py       # NocoDB API Export
+│       │   └── file_backup.py           # NocoDB Data Files (tar.gz)
 │       ├── storage/
 │       │   └── s3_client.py             # S3-kompatibles Storage
 │       ├── alerting/                     # Benachrichtigungen
@@ -273,6 +275,9 @@ docker exec ${STACK_NAME}_BACKUP python cli.py list
 
 # Datenbank wiederherstellen
 docker exec ${STACK_NAME}_BACKUP python cli.py restore-dump 2024-02-05_05-15-00
+
+# Daten-Dateien wiederherstellen (nach restore-dump)
+docker exec ${STACK_NAME}_BACKUP python cli.py restore-files 2024-02-05_05-15-00
 ```
 
 Siehe [docs/BACKUP.md](docs/BACKUP.md) fuer Details.

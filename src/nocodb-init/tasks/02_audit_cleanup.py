@@ -7,7 +7,7 @@ audit entries. However, historical data remains and can bloat the database.
 This task cleans up audit tables on container start when enabled.
 
 Environment variables:
-  INIT_AUDIT_CLEANUP=true/false  - Enable/disable cleanup (default: false)
+  INIT_AUDIT_CLEANUP=true/false  - Enable/disable cleanup (default: true)
 
 Tables cleaned:
   - nc_audit_v2           - Main audit log (user actions)
@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 # Task metadata
 TASK_NAME = "Audit Cleanup"
 TASK_DESCRIPTION = "Clean up audit and log tables"
-ENABLED_VAR = "INIT_AUDIT_CLEANUP"  # Set to "true" to enable (default: disabled)
+ENABLED_VAR = "INIT_AUDIT_CLEANUP"  # Set to "false" to disable (default: enabled)
 
 # Tables to clean (in order)
 AUDIT_TABLES = [

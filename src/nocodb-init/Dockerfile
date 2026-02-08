@@ -5,6 +5,7 @@
 #
 # Tasks:
 #   - Check for collation version mismatches (with optional auto-fix)
+#   - Clean up audit and log tables (when NC_DISABLE_AUDIT=true)
 #   - Extensible for future initialization tasks
 #
 # Usage:
