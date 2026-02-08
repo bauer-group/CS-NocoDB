@@ -278,6 +278,12 @@ docker exec ${STACK_NAME}_BACKUP python cli.py restore-dump 2024-02-05_05-15-00
 
 # Daten-Dateien wiederherstellen (nach restore-dump)
 docker exec ${STACK_NAME}_BACKUP python cli.py restore-files 2024-02-05_05-15-00
+
+# Tabellen-Schema auf neuem System wiederherstellen
+docker exec ${STACK_NAME}_BACKUP python cli.py restore-schema 2024-02-05_05-15-00
+
+# Records in bestehende Tabellen importieren
+docker exec ${STACK_NAME}_BACKUP python cli.py restore-records 2024-02-05_05-15-00 --base "Meine_Base"
 ```
 
 Siehe [docs/BACKUP.md](docs/BACKUP.md) fuer Details.

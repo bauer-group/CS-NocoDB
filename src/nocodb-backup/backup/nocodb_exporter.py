@@ -127,19 +127,41 @@ class NocoDBExporter:
         return []
 
     def _get_tables(self, base_id: str) -> list[dict]:
-        """Get all tables in a base.
+        """Get all tables in a base with full column definitions.
+
+        The base tables endpoint only returns basic metadata (no columns).
+        For each table, we fetch the full schema via the table detail endpoint.
 
         Args:
             base_id: Base ID.
 
         Returns:
-            List of table objects.
+            List of table objects with columns.
         """
         # NocoDB API v2: GET /api/v2/meta/bases/{baseId}/tables
         response = self._api_get(f"/api/v2/meta/bases/{base_id}/tables")
-        if response and isinstance(response, dict):
-            return response.get("list", [])
-        return []
+        if not response or not isinstance(response, dict):
+            return []
+
+        tables = response.get("list", [])
+        detailed_tables = []
+
+        for table in tables:
+            table_id = table.get("id")
+            if not table_id:
+                continue
+
+            # Fetch full table schema with columns
+            # GET /api/v2/meta/tables/{tableId}
+            detail = self._api_get(f"/api/v2/meta/tables/{table_id}")
+            if detail and isinstance(detail, dict):
+                detailed_tables.append(detail)
+            else:
+                # Fallback to basic metadata if detail fetch fails
+                backup_logger.warning(f"Could not fetch schema for table '{table.get('title')}', using basic metadata")
+                detailed_tables.append(table)
+
+        return detailed_tables
 
     def _get_table_records(self, table_id: str, limit: int = 1000, offset: int = 0) -> tuple[list[dict], int]:
         """Get records from a table.

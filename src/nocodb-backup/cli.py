@@ -337,6 +337,233 @@ def inspect_backup(
 
 
 # -------------------------------------------------------------------------------
+# Restore Schema Command
+# -------------------------------------------------------------------------------
+@app.command("restore-schema")
+def restore_schema(
+    backup_id: str = typer.Argument(..., help="Backup ID containing the API export"),
+    base: str = typer.Option(None, "--base", "-b", help="Base name to restore (optional, restores all if not set)"),
+    table: str = typer.Option(None, "--table", "-t", help="Table name to restore (requires --base)"),
+    skip_existing: bool = typer.Option(False, "--skip-existing", help="Skip tables that already exist"),
+    force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation"),
+):
+    """Recreate table schemas from backup on a (fresh) NocoDB instance.
+
+    Creates bases (if needed) and tables with their column definitions
+    from the backed-up schema.json files. Use this to set up an empty
+    NocoDB from a backup before importing records with restore-records.
+
+    System columns (Id, CreatedAt, UpdatedAt) are auto-created by NocoDB.
+    Virtual columns (Links, Lookup, Rollup, Formula) are skipped with a
+    warning and must be recreated manually in the NocoDB UI if needed.
+    """
+    settings = Settings()
+
+    if not settings.nocodb_api_token:
+        console.print("[red]NOCODB_API_TOKEN is required for schema restore.[/]")
+        raise typer.Exit(1)
+
+    if table and not base:
+        console.print("[red]--table requires --base to be specified.[/]")
+        raise typer.Exit(1)
+
+    local_path = Path(settings.data_dir) / backup_id
+    bases_dir = local_path / "bases"
+
+    if not bases_dir.exists():
+        console.print(f"[red]No API export found in backup '{backup_id}'.[/]")
+        console.print("[dim]Use 'download' command to fetch from S3 first.[/]")
+        raise typer.Exit(1)
+
+    # Collect schemas to restore: (base_name, base_meta, table_name, schema)
+    restore_targets: list[tuple[str, dict, str, dict]] = []
+
+    for base_path in sorted(bases_dir.iterdir()):
+        if not base_path.is_dir():
+            continue
+        if base and base_path.name != base:
+            continue
+
+        base_meta: dict = {}
+        meta_file = base_path / "metadata.json"
+        if meta_file.exists():
+            base_meta = json.loads(meta_file.read_text())
+
+        tables_dir = base_path / "tables"
+        if not tables_dir.exists():
+            continue
+
+        for table_path in sorted(tables_dir.iterdir()):
+            if not table_path.is_dir():
+                continue
+            if table and table_path.name != table:
+                continue
+
+            schema_file = table_path / "schema.json"
+            if schema_file.exists():
+                schema = json.loads(schema_file.read_text())
+                restore_targets.append((base_path.name, base_meta, table_path.name, schema))
+
+    if not restore_targets:
+        console.print("[yellow]No matching tables with schemas found.[/]")
+        raise typer.Exit(1)
+
+    # Preview
+    preview_table = Table(title="Tables to Create", show_header=True, header_style="bold cyan")
+    preview_table.add_column("Base", style="cyan")
+    preview_table.add_column("Table", style="yellow")
+    preview_table.add_column("Columns", justify="right", style="green")
+    preview_table.add_column("Skipped", justify="right", style="dim")
+
+    all_skipped: dict[tuple[str, str], list[str]] = {}
+    for base_name, _, table_name, schema in restore_targets:
+        columns = schema.get("columns", [])
+        creatable, skipped = _prepare_columns_for_create(columns)
+        all_skipped[(base_name, table_name)] = skipped
+        preview_table.add_row(
+            base_name, table_name,
+            str(len(creatable)),
+            str(len(skipped)) if skipped else "-",
+        )
+
+    console.print()
+    console.print(preview_table)
+
+    # Show skipped virtual columns
+    has_skipped = any(s for s in all_skipped.values())
+    if has_skipped:
+        console.print()
+        console.print("[dim]Skipped virtual columns (must be recreated manually):[/]")
+        for (bname, tname), skipped in all_skipped.items():
+            if skipped:
+                console.print(f"[dim]  {bname}/{tname}: {', '.join(skipped)}[/]")
+
+    if not force:
+        console.print()
+        console.print(Panel(
+            "[yellow]Tables will be created via NocoDB API.[/]\n"
+            "[dim]Bases will be created if they don't exist.[/]\n"
+            "[dim]System columns (Id, CreatedAt, UpdatedAt) are auto-created by NocoDB.[/]",
+            title="Schema Restore",
+            border_style="cyan",
+        ))
+
+        if not Confirm.ask("[yellow]Proceed with schema restore?[/]"):
+            console.print("[dim]Cancelled.[/]")
+            return
+
+    # Execute restore
+    api_url = settings.nocodb_api_url.rstrip("/")
+    headers = {"xc-token": settings.nocodb_api_token, "Content-Type": "application/json"}
+
+    with httpx.Client(base_url=api_url, headers=headers, timeout=60.0) as client:
+        # Get existing bases
+        resp = client.get("/api/v2/meta/bases")
+        resp.raise_for_status()
+        existing_bases = {b["title"]: b["id"] for b in resp.json().get("list", [])}
+
+        tables_created = 0
+        tables_skipped = 0
+        errors = 0
+
+        # Group targets by base
+        targets_by_base: dict[str, tuple[dict, list[tuple[str, dict]]]] = {}
+        for base_name, base_meta, table_name, schema in restore_targets:
+            if base_name not in targets_by_base:
+                targets_by_base[base_name] = (base_meta, [])
+            targets_by_base[base_name][1].append((table_name, schema))
+
+        for base_name, (base_meta, tables) in targets_by_base.items():
+            # Create base if it doesn't exist
+            base_id = existing_bases.get(base_name)
+            if not base_id:
+                try:
+                    resp = client.post("/api/v2/meta/bases", json={"title": base_name})
+                    resp.raise_for_status()
+                    base_id = resp.json().get("id")
+                    console.print(f"[green]  + Created base '{base_name}'[/]")
+                except httpx.HTTPStatusError as e:
+                    console.print(f"[red]  ! Failed to create base '{base_name}': {e.response.status_code}[/]")
+                    errors += len(tables)
+                    continue
+
+            if not base_id:
+                console.print(f"[red]  ! No base ID for '{base_name}' - skipping[/]")
+                errors += len(tables)
+                continue
+
+            # Get existing tables in this base
+            resp = client.get(f"/api/v2/meta/bases/{base_id}/tables")
+            resp.raise_for_status()
+            existing_tables = {t["title"]: t["id"] for t in resp.json().get("list", [])}
+
+            for table_name, schema in tables:
+                original_title = schema.get("title", table_name)
+
+                # Check if table already exists
+                if original_title in existing_tables:
+                    if skip_existing:
+                        console.print(f"[dim]  - {base_name}/{original_title}: already exists, skipping[/]")
+                        tables_skipped += 1
+                        continue
+                    else:
+                        console.print(
+                            f"[red]  ! Table '{base_name}/{original_title}' already exists. "
+                            f"Use --skip-existing to skip.[/]"
+                        )
+                        errors += 1
+                        continue
+
+                # Prepare columns
+                columns = schema.get("columns", [])
+                creatable, _ = _prepare_columns_for_create(columns)
+
+                if not creatable:
+                    console.print(f"[yellow]  ! {base_name}/{original_title}: no creatable columns found[/]")
+                    errors += 1
+                    continue
+
+                # Create table via API
+                try:
+                    resp = client.post(
+                        f"/api/v2/meta/bases/{base_id}/tables",
+                        json={
+                            "title": original_title,
+                            "columns": creatable,
+                        },
+                    )
+                    resp.raise_for_status()
+                    tables_created += 1
+                    console.print(f"[green]  + {base_name}/{original_title}: created ({len(creatable)} columns)[/]")
+                except httpx.HTTPStatusError as e:
+                    error_detail = ""
+                    try:
+                        error_detail = e.response.json().get("msg", "")
+                    except Exception:
+                        pass
+                    console.print(
+                        f"[red]  ! Failed to create '{base_name}/{original_title}': "
+                        f"{e.response.status_code} {error_detail}[/]"
+                    )
+                    errors += 1
+
+    # Summary
+    console.print()
+    summary = f"{tables_created} table(s) created"
+    if tables_skipped:
+        summary += f", {tables_skipped} skipped"
+    if errors:
+        console.print(f"[yellow]Completed with {errors} error(s). {summary}.[/]")
+    else:
+        console.print(f"[green]+ {summary}.[/]")
+
+    if tables_created > 0 and has_skipped:
+        console.print()
+        console.print("[dim]Note: Virtual columns (Links, Lookup, Rollup, Formula) were skipped.[/]")
+        console.print("[dim]These must be recreated manually in the NocoDB UI.[/]")
+
+
+# -------------------------------------------------------------------------------
 # Restore Records Command
 # -------------------------------------------------------------------------------
 @app.command("restore-records")
@@ -869,6 +1096,77 @@ def restore_files(
     console.print(f"[green]+ Restored {file_count} file(s) to {target_path}[/]")
     console.print()
     console.print("[yellow]IMPORTANT: Restart NocoDB to pick up the restored files![/]")
+
+
+# -------------------------------------------------------------------------------
+# Schema Helpers
+# -------------------------------------------------------------------------------
+
+# System/auto-created column types (NocoDB adds these automatically)
+_SYSTEM_UIDTS = {"ID", "CreatedTime", "LastModifiedTime", "CreatedBy", "LastModifiedBy"}
+
+# Virtual column types that reference other tables/columns
+_VIRTUAL_UIDTS = {"Links", "LinkToAnotherRecord", "Lookup", "Rollup", "Formula", "Button"}
+
+# Column properties to preserve for table creation
+_CREATE_PROPS = {"title", "column_name", "uidt", "dtxp", "dtxs", "rqd", "cdf", "pv", "meta"}
+
+
+def _prepare_columns_for_create(columns: list[dict]) -> tuple[list[dict], list[str]]:
+    """Filter and clean columns from schema.json for table creation via API.
+
+    Args:
+        columns: Column definitions from schema.json.
+
+    Returns:
+        Tuple of (creatable column dicts, skipped column descriptions).
+    """
+    creatable = []
+    skipped = []
+
+    for col in columns:
+        uidt = col.get("uidt", "")
+        title = col.get("title", "?")
+
+        # Skip system columns
+        if uidt in _SYSTEM_UIDTS or col.get("system"):
+            continue
+
+        # Skip primary key (auto-created by NocoDB)
+        if col.get("pk"):
+            continue
+
+        # Skip virtual/relation columns (need manual recreation)
+        if uidt in _VIRTUAL_UIDTS:
+            skipped.append(f"{title} ({uidt})")
+            continue
+
+        # Build clean column definition with only relevant properties
+        clean: dict = {}
+        for key in _CREATE_PROPS:
+            val = col.get(key)
+            if val is not None:
+                clean[key] = val
+
+        if "title" not in clean or "uidt" not in clean:
+            continue
+
+        # For Select fields: ensure options are included from colOptions
+        if uidt in ("SingleSelect", "MultiSelect"):
+            col_options = col.get("colOptions")
+            if col_options and isinstance(col_options, dict):
+                options = col_options.get("options", [])
+                if options and not clean.get("dtxp"):
+                    # Convert to dtxp format: 'opt1','opt2'
+                    clean["dtxp"] = ",".join(
+                        f"'{opt['title']}'"
+                        for opt in options
+                        if isinstance(opt, dict) and "title" in opt
+                    )
+
+        creatable.append(clean)
+
+    return creatable, skipped
 
 
 # -------------------------------------------------------------------------------

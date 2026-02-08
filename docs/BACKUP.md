@@ -297,6 +297,31 @@ Original-Pfaden, passend zu den Referenzen in der wiederhergestellten Datenbank.
 - Verwenden nach `restore-dump` fuer eine vollstaendige Disaster Recovery
 - Nur relevant fuer lokale Attachments (nicht bei S3-Storage)
 
+### Tabellen-Schema wiederherstellen (neues System)
+
+```bash
+# Alle Bases und Tabellen aus Backup erstellen
+docker exec ${STACK_NAME}_BACKUP python cli.py restore-schema 2024-02-05_05-15-00
+
+# Nur eine bestimmte Base wiederherstellen
+docker exec ${STACK_NAME}_BACKUP python cli.py restore-schema 2024-02-05_05-15-00 --base "Meine_Base"
+
+# Nur eine bestimmte Tabelle wiederherstellen
+docker exec ${STACK_NAME}_BACKUP python cli.py restore-schema 2024-02-05_05-15-00 --base "Meine_Base" --table "Kunden"
+
+# Bereits existierende Tabellen ueberspringen
+docker exec ${STACK_NAME}_BACKUP python cli.py restore-schema 2024-02-05_05-15-00 --skip-existing
+```
+
+**Hinweise:**
+
+- Erstellt Bases automatisch, falls sie noch nicht existieren
+- Systemspalten (Id, CreatedAt, UpdatedAt) werden von NocoDB automatisch angelegt
+- Virtuelle Spalten (Links, Lookup, Rollup, Formula) werden uebersprungen und
+  muessen manuell in der NocoDB-Oberflaeche nachgebaut werden
+- Das Schema stammt aus den `schema.json` Dateien im API-Export (vollstaendige Spaltendefinitionen)
+- Nach `restore-schema` koennen Records mit `restore-records` importiert werden
+
 ### Records wiederherstellen (einzelne Tabellen/Bases)
 
 ```bash
@@ -377,7 +402,44 @@ docker compose logs -f nocodb-server
 - **Kein File-Backup vorhanden:** Als Fallback kann `restore-attachments` Dateien
   via NocoDB API neu hochladen (erfordert laufenden NocoDB-Server).
 
-### Szenario 2: Einzelne Base oder Tabelle wiederherstellen
+### Szenario 2: Tabellen auf neuem System anlegen (Migration/Klon)
+
+Wenn NocoDB auf einem neuen System aufgesetzt wird und die Tabellenstruktur
+aus einem Backup uebernommen werden soll (ohne den kompletten DB-Dump):
+
+```bash
+# 1. Frischen Stack deployen
+docker compose -f docker-compose.traefik.yml up -d
+
+# 2. NocoDB oeffnen und Admin-Account erstellen
+# Browser: https://${SERVICE_HOSTNAME}
+
+# 3. API Token erstellen (Account Settings > Tokens)
+# Token in .env eintragen: NOCODB_API_TOKEN=...
+
+# 4. Backup-Container starten
+docker compose -f docker-compose.traefik.yml --profile backup up -d nocodb-backup
+
+# 5. Backup herunterladen (falls nur auf S3)
+docker exec ${STACK_NAME}_BACKUP python cli.py download 2024-02-05_05-15-00
+
+# 6. Tabellen-Schema wiederherstellen (erstellt Bases + Tabellen)
+docker exec ${STACK_NAME}_BACKUP python cli.py restore-schema 2024-02-05_05-15-00
+
+# 7. Records importieren (optional)
+docker exec ${STACK_NAME}_BACKUP python cli.py restore-records 2024-02-05_05-15-00 --with-attachments
+
+# 8. Virtuelle Spalten manuell nachbauen (Links, Lookups, Rollups, Formulas)
+```
+
+**Wichtig:**
+
+- Das Schema enthaelt alle physischen Spalten mit Typen, Optionen und Einstellungen
+- Virtuelle Spalten (Verknuepfungen, Lookups, Rollups, Formulas) muessen manuell
+  in der NocoDB-Oberflaeche nachgebaut werden
+- Ideal fuer: Staging-Umgebung, System-Migration, Tabellenstruktur klonen
+
+### Szenario 3: Einzelne Base oder Tabelle wiederherstellen
 
 Wenn nur bestimmte Daten verloren gegangen sind (z.B. versehentlich geloeschte Records):
 
@@ -405,7 +467,7 @@ docker exec ${STACK_NAME}_BACKUP python cli.py restore-records 2024-02-05_05-15-
 - Bei grossen Tabellen erfolgt der Import in 100er-Batches
 - `--with-attachments` laedt Dateien via NocoDB Storage API hoch und verknuepft sie
 
-### Szenario 3: Manuelle SQL-Wiederherstellung
+### Szenario 4: Manuelle SQL-Wiederherstellung
 
 Fuer fortgeschrittene Benutzer, die direkt mit PostgreSQL arbeiten:
 
