@@ -15,7 +15,7 @@
 # -------------------------------------------------------------------------------
 # Stage 1: Builder - Install Python Dependencies
 # -------------------------------------------------------------------------------
-FROM python:3.13-alpine AS builder
+FROM python:3.14-alpine AS builder
 
 RUN apk add --no-cache \
     gcc \
@@ -30,7 +30,7 @@ RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
 # -------------------------------------------------------------------------------
 # Stage 2: Test - Run Tests During Build
 # -------------------------------------------------------------------------------
-FROM python:3.13-alpine AS test
+FROM python:3.14-alpine AS test
 
 RUN apk add --no-cache \
     gcc \
@@ -53,7 +53,7 @@ RUN pytest tests/ -v --tb=short \
 # -------------------------------------------------------------------------------
 # Stage 3: Production - Minimal Runtime Image
 # -------------------------------------------------------------------------------
-FROM python:3.13-alpine AS prod
+FROM python:3.14-alpine AS prod
 
 # =============================================================================
 # Labels
@@ -70,7 +70,7 @@ LABEL org.opencontainers.image.source="https://github.com/bauer-group/CS-NocoDB"
 LABEL org.opencontainers.image.url="https://github.com/bauer-group/CS-NocoDB"
 LABEL org.opencontainers.image.documentation="https://github.com/bauer-group/CS-NocoDB#readme"
 LABEL org.opencontainers.image.description="Automated NocoDB backup to S3-compatible storage"
-LABEL org.opencontainers.image.version="0.1.0"
+LABEL org.opencontainers.image.version="0.6.0"
 
 # Python unbuffered output - prevents duplicate lines in Docker logs
 ENV PYTHONUNBUFFERED=1

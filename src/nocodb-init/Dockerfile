@@ -13,7 +13,7 @@
 #   (Runs automatically before nocodb-server via depends_on)
 # ===============================================================================
 
-FROM python:3.13-alpine
+FROM python:3.14-alpine
 
 # =============================================================================
 # Labels
@@ -30,7 +30,7 @@ LABEL org.opencontainers.image.source="https://github.com/bauer-group/CS-NocoDB"
 LABEL org.opencontainers.image.url="https://github.com/bauer-group/CS-NocoDB"
 LABEL org.opencontainers.image.documentation="https://github.com/bauer-group/CS-NocoDB#readme"
 LABEL org.opencontainers.image.description="Database initialization for NocoDB Stack"
-LABEL org.opencontainers.image.version="0.1.0"
+LABEL org.opencontainers.image.version="0.6.0"
 
 # Python unbuffered output - ensures immediate visibility in Docker logs
 ENV PYTHONUNBUFFERED=1
