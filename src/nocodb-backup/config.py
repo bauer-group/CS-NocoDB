@@ -244,12 +244,10 @@ class Settings(BaseSettings):
     )
     smtp_password: Optional[str] = Field(
         default=None,
-        alias="SMTP_PASS",
         description="SMTP password"
     )
     smtp_from: Optional[str] = Field(
         default=None,
-        alias="SMTP_SENDER",
         description="Email sender address"
     )
     smtp_from_name: str = Field(

@@ -31,7 +31,7 @@ class EmailAlerter(Alerter):
         if not self.settings.smtp_host:
             errors.append("Email: SMTP_HOST not configured")
         if not self.settings.smtp_from:
-            errors.append("Email: SMTP_SENDER not configured")
+            errors.append("Email: SMTP_FROM not configured")
         if not self.settings.smtp_to:
             errors.append("Email: SMTP_TO not configured")
         return errors
