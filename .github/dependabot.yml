@@ -22,9 +22,9 @@ updates:
     commit-message:
       prefix: "chore(ci)"
 
-  # Docker base image updates - n8n
+  # Docker base image updates - NocoDB
   - package-ecosystem: "docker"
-    directory: "/src/n8n"
+    directory: "/src/nocodb"
     schedule:
       interval: "weekly"
       day: "sunday"
@@ -37,9 +37,24 @@ updates:
     commit-message:
       prefix: "chore(docker)"
 
-  # Docker base image updates - Runner
+  # Docker base image updates - Init
   - package-ecosystem: "docker"
-    directory: "/src/runner"
+    directory: "/src/nocodb-init"
+    schedule:
+      interval: "weekly"
+      day: "sunday"
+      time: "06:30"
+      timezone: "Etc/UTC"
+    labels:
+      - "dependencies"
+      - "docker"
+      - "dependabot"
+    commit-message:
+      prefix: "chore(docker)"
+
+  # Docker base image updates - Backup
+  - package-ecosystem: "docker"
+    directory: "/src/nocodb-backup"
     schedule:
       interval: "weekly"
       day: "sunday"

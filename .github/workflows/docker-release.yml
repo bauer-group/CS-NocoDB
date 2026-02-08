@@ -76,8 +76,8 @@ jobs:
     with:
       deploy-environment: 'production'
       publish-to: 'ghcr'
-      ghcr-image-name: 'bauer-group/CS-n8n/n8n'
-      docker-image-name: 'bauergroup/n8n'
+      ghcr-image-name: 'bauer-group/CS-NocoDB/nocodb'
+      docker-image-name: 'bauergroup/nocodb'
 
       release-version: ${{ needs.release.outputs.version }}
       image-tags: 'stable'
@@ -86,8 +86,8 @@ jobs:
       auto-tags: true
       latest-tag: true
 
-      dockerfile-path: './src/n8n/Dockerfile'
-      docker-context: './src/n8n'
+      dockerfile-path: './src/nocodb/Dockerfile'
+      docker-context: './src/nocodb'
       platforms: 'linux/amd64'
 
       push: true
@@ -108,68 +108,11 @@ jobs:
     uses: bauer-group/automation-templates/.github/workflows/docker-build.yml@main
     with:
       publish-to: 'ghcr'
-      ghcr-image-name: 'bauer-group/CS-n8n/n8n'
+      ghcr-image-name: 'bauer-group/CS-NocoDB/nocodb'
 
       auto-tags: true
-      dockerfile-path: './src/n8n/Dockerfile'
-      docker-context: './src/n8n'
-      platforms: 'linux/amd64'
-
-      push: false
-
-      security-scan: false
-      security-fail-on: 'CRITICAL'
-    secrets: inherit
-
-  # ============================================
-  # Runner Docker Build Jobs
-  # ============================================
-
-  docker-build-runner-release:
-    name: 🐳 Build & Push Runner Image
-    needs: release
-    if: needs.release.outputs.release-created == 'true'
-    uses: bauer-group/automation-templates/.github/workflows/docker-build.yml@main
-    with:
-      deploy-environment: 'production'
-      publish-to: 'ghcr'
-      ghcr-image-name: 'bauer-group/CS-n8n/n8n-runner'
-      docker-image-name: 'bauergroup/n8n-runner'
-
-      release-version: ${{ needs.release.outputs.version }}
-      image-tags: 'stable'
-
-      update-dockerfile-version: true
-      auto-tags: true
-      latest-tag: true
-
-      dockerfile-path: './src/runner/Dockerfile'
-      docker-context: './src/runner'
-      platforms: 'linux/amd64'
-
-      push: true
-
-      security-scan: false
-      security-fail-on: 'CRITICAL'
-      generate-sbom: true
-      sync-dockerhub-readme: true
-    secrets: inherit
-
-  docker-build-runner-pr:
-    name: 🔨 Validate Runner Build (PR)
-    needs: [validate-compose, validate-scripts]
-    if: |
-      github.event_name == 'pull_request' &&
-      needs.validate-compose.result == 'success' &&
-      needs.validate-scripts.result == 'success'
-    uses: bauer-group/automation-templates/.github/workflows/docker-build.yml@main
-    with:
-      publish-to: 'ghcr'
-      ghcr-image-name: 'bauer-group/CS-n8n/n8n-runner'
-
-      auto-tags: true
-      dockerfile-path: './src/runner/Dockerfile'
-      docker-context: './src/runner'
+      dockerfile-path: './src/nocodb/Dockerfile'
+      docker-context: './src/nocodb'
       platforms: 'linux/amd64'
 
       push: false
@@ -190,8 +133,8 @@ jobs:
     with:
       deploy-environment: 'production'
       publish-to: 'ghcr'
-      ghcr-image-name: 'bauer-group/CS-n8n/n8n-init'
-      docker-image-name: 'bauergroup/n8n-init'
+      ghcr-image-name: 'bauer-group/CS-NocoDB/nocodb-init'
+      docker-image-name: 'bauergroup/nocodb-init'
 
       release-version: ${{ needs.release.outputs.version }}
       image-tags: 'stable'
@@ -200,8 +143,8 @@ jobs:
       auto-tags: true
       latest-tag: true
 
-      dockerfile-path: './src/n8n-init/Dockerfile'
-      docker-context: './src/n8n-init'
+      dockerfile-path: './src/nocodb-init/Dockerfile'
+      docker-context: './src/nocodb-init'
       platforms: 'linux/amd64'
 
       push: true
@@ -222,11 +165,11 @@ jobs:
     uses: bauer-group/automation-templates/.github/workflows/docker-build.yml@main
     with:
       publish-to: 'ghcr'
-      ghcr-image-name: 'bauer-group/CS-n8n/n8n-init'
+      ghcr-image-name: 'bauer-group/CS-NocoDB/nocodb-init'
 
       auto-tags: true
-      dockerfile-path: './src/n8n-init/Dockerfile'
-      docker-context: './src/n8n-init'
+      dockerfile-path: './src/nocodb-init/Dockerfile'
+      docker-context: './src/nocodb-init'
       platforms: 'linux/amd64'
 
       push: false
@@ -247,8 +190,8 @@ jobs:
     with:
       deploy-environment: 'production'
       publish-to: 'ghcr'
-      ghcr-image-name: 'bauer-group/CS-n8n/n8n-backup'
-      docker-image-name: 'bauergroup/n8n-backup'
+      ghcr-image-name: 'bauer-group/CS-NocoDB/nocodb-backup'
+      docker-image-name: 'bauergroup/nocodb-backup'
 
       release-version: ${{ needs.release.outputs.version }}
       image-tags: 'stable'
@@ -257,8 +200,8 @@ jobs:
       auto-tags: true
       latest-tag: true
 
-      dockerfile-path: './src/n8n-backup/Dockerfile'
-      docker-context: './src/n8n-backup'
+      dockerfile-path: './src/nocodb-backup/Dockerfile'
+      docker-context: './src/nocodb-backup'
       platforms: 'linux/amd64'
 
       push: true
@@ -279,11 +222,11 @@ jobs:
     uses: bauer-group/automation-templates/.github/workflows/docker-build.yml@main
     with:
       publish-to: 'ghcr'
-      ghcr-image-name: 'bauer-group/CS-n8n/n8n-backup'
+      ghcr-image-name: 'bauer-group/CS-NocoDB/nocodb-backup'
 
       auto-tags: true
-      dockerfile-path: './src/n8n-backup/Dockerfile'
-      docker-context: './src/n8n-backup'
+      dockerfile-path: './src/nocodb-backup/Dockerfile'
+      docker-context: './src/nocodb-backup'
       platforms: 'linux/amd64'
 
       push: false
