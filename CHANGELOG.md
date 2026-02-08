@@ -1,3 +1,16 @@
+## [0.6.0](https://github.com/bauer-group/CS-NocoDB/compare/v0.5.0...v0.6.0) (2026-02-08)
+
+### 🚀 Features
+
+* Add audit cleanup task and update environment configurations ([6d43d0b](https://github.com/bauer-group/CS-NocoDB/commit/6d43d0bb31d97f6b2e3d8a1d5901f23dd20bac32))
+* Add file_backup_size to alerting classes and update summary outputs ([4600c54](https://github.com/bauer-group/CS-NocoDB/commit/4600c54d885ec4ec29c9b24f57c1ed3e43554150))
+* add PG_USER and PG_DATABASE variables for pg_upgrade script ([220c3cb](https://github.com/bauer-group/CS-NocoDB/commit/220c3cbcc1733a29f19a14960225c20ffec76c99))
+* Add restore-schema command for recreating table schemas from backup ([bce5815](https://github.com/bauer-group/CS-NocoDB/commit/bce5815bc5045f226ca704da6e1ecbc308566dac))
+* Implement S3 storage module for backup management ([4f6463d](https://github.com/bauer-group/CS-NocoDB/commit/4f6463d387d52672ddbff78b61036903def3d7aa))
+* Increase DB_MAX_POOL_SIZE from 45 to 48 for improved connection handling ([b80bfbc](https://github.com/bauer-group/CS-NocoDB/commit/b80bfbce4caf9031ebc499ed3d6faeb56acb1f93))
+* Update Docker configurations for NocoDB, including base images and workflows ([e42a28b](https://github.com/bauer-group/CS-NocoDB/commit/e42a28b4e7b802dc22e433370f1e4a90ea282fef))
+* update pg_upgrade_inplace.sh to support hardlink mode and improve error handling ([c71b308](https://github.com/bauer-group/CS-NocoDB/commit/c71b308ab843ab82f4abc3901a94cd13671c9971))
+
 ## [0.5.0](https://github.com/bauer-group/CS-NocoDB/compare/v0.4.0...v0.5.0) (2026-02-05)
 
 ### 🚀 Features
