@@ -14,7 +14,7 @@ Automatisierte Backup-Loesung für NocoDB mit PostgreSQL-Dumps, API-Exports und 
 
 ### Uebersicht
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │ BACKUP-ARCHITEKTUR                                                          │
 ├─────────────────────────────────────────────────────────────────────────────┤
@@ -86,7 +86,7 @@ Strukturierter Export ueber die NocoDB REST API:
 
 **Struktur:**
 
-```
+```text
 2024-02-05_05-15-00/
 ├── database.sql.gz           # PostgreSQL Dump
 ├── nocodb-data.tar.gz        # NocoDB Daten-Dateien (1:1 Archiv)
@@ -230,7 +230,7 @@ docker exec ${STACK_NAME}_BACKUP python cli.py list
 
 **Ausgabe:**
 
-```
+```text
 ┏━━━━┳━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━┳━━━━━┳━━━━━━━━━━━┓
 ┃ #  ┃ Backup ID           ┃ Local ┃ S3  ┃ Size      ┃
 ┡━━━━╇━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━╇━━━━━╇━━━━━━━━━━━┩
@@ -273,7 +273,7 @@ docker exec ${STACK_NAME}_BACKUP python cli.py inspect 2024-02-05_05-15-00
 
 **Ausgabe:**
 
-```
+```text
 2024-02-05_05-15-00
 ├── database.sql.gz (45.2 MB)
 ├── manifest.json
@@ -632,7 +632,7 @@ Automated backup solution for NocoDB with PostgreSQL dumps, API exports, and S3 
 
 ### Overview
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │ BACKUP ARCHITECTURE                                                         │
 ├─────────────────────────────────────────────────────────────────────────────┤
@@ -704,7 +704,7 @@ Structured export via the NocoDB REST API:
 
 **Structure:**
 
-```
+```text
 2024-02-05_05-15-00/
 ├── database.sql.gz           # PostgreSQL dump
 ├── nocodb-data.tar.gz        # NocoDB data files (1:1 archive)
@@ -848,7 +848,7 @@ docker exec ${STACK_NAME}_BACKUP python cli.py list
 
 **Output:**
 
-```
+```text
 ┏━━━━┳━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━┳━━━━━┳━━━━━━━━━━━┓
 ┃ #  ┃ Backup ID           ┃ Local ┃ S3  ┃ Size      ┃
 ┡━━━━╇━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━╇━━━━━╇━━━━━━━━━━━┩
@@ -891,7 +891,7 @@ docker exec ${STACK_NAME}_BACKUP python cli.py inspect 2024-02-05_05-15-00
 
 **Output:**
 
-```
+```text
 2024-02-05_05-15-00
 ├── database.sql.gz (45.2 MB)
 ├── manifest.json
