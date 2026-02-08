@@ -70,7 +70,7 @@ LABEL org.opencontainers.image.source="https://github.com/bauer-group/CS-NocoDB"
 LABEL org.opencontainers.image.url="https://github.com/bauer-group/CS-NocoDB"
 LABEL org.opencontainers.image.documentation="https://github.com/bauer-group/CS-NocoDB#readme"
 LABEL org.opencontainers.image.description="Automated NocoDB backup to S3-compatible storage"
-LABEL org.opencontainers.image.version="0.6.1"
+LABEL org.opencontainers.image.version="0.6.2"
 
 # Python unbuffered output - prevents duplicate lines in Docker logs
 ENV PYTHONUNBUFFERED=1
