@@ -1,6 +1,6 @@
 # NocoDB Backup & Recovery
 
-Automatisierte Backup-Loesung fuer NocoDB mit PostgreSQL-Dumps, API-Exports und S3-Integration.
+Automatisierte Backup-Loesung für NocoDB mit PostgreSQL-Dumps, API-Exports und S3-Integration.
 
 ## Uebersicht
 
@@ -46,12 +46,12 @@ Automatisierte Backup-Loesung fuer NocoDB mit PostgreSQL-Dumps, API-Exports und 
 
 ### 1. PostgreSQL Database Dump (pg_dump)
 
-Vollstaendiger Datenbank-Dump fuer Disaster Recovery:
+Vollstaendiger Datenbank-Dump für Disaster Recovery:
 
 - **Format:** Komprimiertes SQL (`database.sql.gz`)
 - **Inhalt:** Komplette Datenbankstruktur und Daten
 - **Wiederherstellung:** Mit `psql` oder dem CLI-Tool
-- **Empfehlung:** Primaeres Backup fuer vollstaendige Wiederherstellung
+- **Empfehlung:** Primaeres Backup für vollstaendige Wiederherstellung
 
 ### 2. NocoDB Data Files (tar.gz)
 
@@ -60,7 +60,7 @@ Vollstaendiger Datenbank-Dump fuer Disaster Recovery:
 - **Format:** Komprimiertes Tar-Archiv (`nocodb-data.tar.gz`)
 - **Inhalt:** Alle Dateien aus dem NocoDB-Datenverzeichnis (Uploads, Attachments)
 - **Wiederherstellung:** Direktes Entpacken in das NocoDB-Datenverzeichnis
-- **Empfehlung:** Fuer Disaster Recovery zusammen mit `restore-dump`
+- **Empfehlung:** für Disaster Recovery zusammen mit `restore-dump`
 
 Aktivierung: `NOCODB_BACKUP_INCLUDE_FILES=true` (Standard).
 Deaktivieren wenn Attachments auf S3 liegen (`NC_S3_BUCKET_NAME`).
@@ -99,13 +99,13 @@ Strukturierter Export ueber die NocoDB REST API:
 # Production mit Backup-Sidecar
 docker compose -f docker-compose.traefik.yml --profile backup up -d
 
-# Oder fuer Development mit MinIO
+# Oder für Development mit MinIO
 docker compose -f docker-compose.development.yml --profile backup up -d
 ```
 
 ### 2. API Token erstellen
 
-Fuer API-basierte Backups wird ein NocoDB API Token benoetigt:
+für API-basierte Backups wird ein NocoDB API Token benoetigt:
 
 1. NocoDB oeffnen
 2. **Account Settings** > **Tokens**
@@ -199,7 +199,7 @@ NOCODB_BACKUP_WEBHOOK_URL=https://your-webhook.example.com
 
 ## CLI-Befehle
 
-Der Backup-Container bietet ein CLI fuer manuelle Operationen:
+Der Backup-Container bietet ein CLI für manuelle Operationen:
 
 ### Sofort-Backup ausfuehren
 
@@ -294,8 +294,8 @@ Original-Pfaden, passend zu den Referenzen in der wiederhergestellten Datenbank.
 **Wichtig:**
 
 - NocoDB muss waehrend der Wiederherstellung gestoppt sein
-- Verwenden nach `restore-dump` fuer eine vollstaendige Disaster Recovery
-- Nur relevant fuer lokale Attachments (nicht bei S3-Storage)
+- Verwenden nach `restore-dump` für eine vollstaendige Disaster Recovery
+- Nur relevant für lokale Attachments (nicht bei S3-Storage)
 
 ### Tabellen-Schema wiederherstellen (neues System)
 
@@ -359,7 +359,7 @@ docker exec ${STACK_NAME}_BACKUP python cli.py restore-attachments 2024-02-05_05
     --base "Meine_Base" --table "Kunden"
 ```
 
-**Hinweis:** Dieser Befehl ist fuer die Verwendung nach `restore-dump` gedacht.
+**Hinweis:** Dieser Befehl ist für die Verwendung nach `restore-dump` gedacht.
 Die Records existieren bereits in der Datenbank mit ihren Original-IDs.
 Attachments werden via NocoDB Storage API hochgeladen und mit den bestehenden Records verknuepft.
 
@@ -437,7 +437,7 @@ docker exec ${STACK_NAME}_BACKUP python cli.py restore-records 2024-02-05_05-15-
 - Das Schema enthaelt alle physischen Spalten mit Typen, Optionen und Einstellungen
 - Virtuelle Spalten (Verknuepfungen, Lookups, Rollups, Formulas) muessen manuell
   in der NocoDB-Oberflaeche nachgebaut werden
-- Ideal fuer: Staging-Umgebung, System-Migration, Tabellenstruktur klonen
+- Ideal für: Staging-Umgebung, System-Migration, Tabellenstruktur klonen
 
 ### Szenario 3: Einzelne Base oder Tabelle wiederherstellen
 
@@ -469,7 +469,7 @@ docker exec ${STACK_NAME}_BACKUP python cli.py restore-records 2024-02-05_05-15-
 
 ### Szenario 4: Manuelle SQL-Wiederherstellung
 
-Fuer fortgeschrittene Benutzer, die direkt mit PostgreSQL arbeiten:
+für fortgeschrittene Benutzer, die direkt mit PostgreSQL arbeiten:
 
 ```bash
 # Dump entpacken
@@ -484,7 +484,7 @@ docker exec ${STACK_NAME}_BACKUP python cli.py restore-attachments 2024-02-05_05
 
 ## Development mit MinIO
 
-Fuer lokale Entwicklung und Tests steht MinIO als S3-kompatibler Storage bereit.
+für lokale Entwicklung und Tests steht MinIO als S3-kompatibler Storage bereit.
 
 ### MinIO starten
 
@@ -508,8 +508,8 @@ docker compose -f docker-compose.development.yml --profile backup up -d
 Der `minio-init` Container erstellt automatisch:
 
 1. **Bucket:** `nocodb-backups` (konfigurierbar)
-2. **Service User:** Dedizierter Benutzer fuer nocodb-backup
-3. **IAM Policy:** Eingeschraenkte Rechte nur fuer den Backup-Bucket
+2. **Service User:** Dedizierter Benutzer für nocodb-backup
+3. **IAM Policy:** Eingeschraenkte Rechte nur für den Backup-Bucket
 
 ## Init Container
 

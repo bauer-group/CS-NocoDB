@@ -5,11 +5,11 @@ Production-ready Docker Compose Setup für [NocoDB](https://nocodb.com/) mit Pos
 ## Features
 
 - **PostgreSQL 18** mit Production-Tuning (SSD/NVMe optimiert)
-- **5 Deployment-Modi** fuer verschiedene Umgebungen
+- **5 Deployment-Modi** für verschiedene Umgebungen
 - **Automatisierte Backups** mit S3-Support und Alerting
-- **Init Container** fuer Datenbank-Wartung (Collation Check/Auto-Fix)
+- **Init Container** für Datenbank-Wartung (Collation Check/Auto-Fix)
 - **IPv4 + IPv6** Dual-Stack Netzwerk
-- **Healthchecks** fuer alle Services
+- **Healthchecks** für alle Services
 - **Strukturierte Logs** mit Rotation
 - **Umfangreiche Dokumentation** auf Deutsch
 
@@ -76,7 +76,7 @@ docker compose -f docker-compose.traefik-local.yml up -d
 
 ### Traefik Header Auth
 
-HTTPS mit zusaetzlicher Header-Authentifizierung - ideal fuer API-Zugriffe:
+HTTPS mit zusaetzlicher Header-Authentifizierung - ideal für API-Zugriffe:
 
 ```bash
 docker compose -f docker-compose.traefik-header-auth.yml up -d
@@ -91,7 +91,7 @@ curl -H "X-BAUERGROUP-Auth: your-secret" https://db.example.com/api/v2/...
 
 ### Development Mode
 
-Fuer lokale Entwicklung mit Image-Builds und MinIO:
+für lokale Entwicklung mit Image-Builds und MinIO:
 
 ```bash
 # Build und Start
@@ -104,7 +104,7 @@ docker compose -f docker-compose.development.yml --profile backup up -d --build
 **Features:**
 - Lokale Image-Builds aus `src/` Verzeichnis
 - MinIO als lokaler S3-Ersatz (Port 9001)
-- Ideal fuer Testing von Backup-Funktionen
+- Ideal für Testing von Backup-Funktionen
 
 ## Backup-Sidecar
 
@@ -121,9 +121,9 @@ docker compose -f docker-compose.traefik.yml --profile backup up -d
 - S3-kompatibles Storage (AWS S3, MinIO, Wasabi, etc.)
 - Cron oder Interval Scheduling
 - Alerting (Email, Teams, Webhook)
-- CLI fuer manuelle Backups und Restore
+- CLI für manuelle Backups und Restore
 
-Siehe [docs/BACKUP.md](docs/BACKUP.md) fuer die vollstaendige Dokumentation.
+Siehe [docs/BACKUP.md](docs/BACKUP.md) für die vollstaendige Dokumentation.
 
 ## Konfiguration
 
@@ -220,7 +220,7 @@ NocoDB/
 │       ├── Dockerfile
 │       ├── requirements.txt
 │       ├── main.py                       # Entry Point
-│       ├── cli.py                        # CLI fuer manuelle Operationen
+│       ├── cli.py                        # CLI für manuelle Operationen
 │       ├── config.py                     # Konfiguration (Pydantic Settings)
 │       ├── scheduler.py                  # Cron/Interval Scheduler
 │       ├── backup/                       # Backup-Module
@@ -286,7 +286,7 @@ docker exec ${STACK_NAME}_BACKUP python cli.py restore-schema 2024-02-05_05-15-0
 docker exec ${STACK_NAME}_BACKUP python cli.py restore-records 2024-02-05_05-15-00 --base "Meine_Base"
 ```
 
-Siehe [docs/BACKUP.md](docs/BACKUP.md) fuer Details.
+Siehe [docs/BACKUP.md](docs/BACKUP.md) für Details.
 
 ### Manuelles Backup
 
