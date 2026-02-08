@@ -1,0 +1,445 @@
+# =============================================================================
+# NocoDB - Development Mode (Local Image Builds)
+# =============================================================================
+# Usage: docker compose -f docker-compose.development.yml up -d --build
+#
+# Features:
+#   - Builds custom NocoDB, init and backup images from src/
+#   - Direct port binding without reverse proxy
+#   - PostgreSQL database with optimized settings
+#   - MinIO for local S3 testing (optional profile)
+#   - IPv4 and IPv6 support
+#
+# Profiles:
+#   - backup: Enable backup sidecar + MinIO
+#   - minio:  Enable MinIO only (for manual testing)
+#
+# Build Only:
+#   docker compose -f docker-compose.development.yml build
+#
+# Access:
+#   - Application: http://localhost:${EXPOSED_APP_PORT}
+#   - MinIO Console: http://localhost:9001 (with --profile backup or minio)
+# =============================================================================
+
+
+services:
+
+  ### Application Service ###
+  nocodb-server:
+    build:
+      context: ./src/nocodb
+      args:
+        BASE_NOCODB_IMAGE: ${BASE_NOCODB_IMAGE:-nocodb/nocodb}
+        BASE_NOCODB_VERSION: ${BASE_NOCODB_VERSION:-latest}
+    restart: unless-stopped
+    container_name: ${STACK_NAME:-nocodb-dev}_SERVER
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/api/v1/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+    environment:
+      - TZ=${TIME_ZONE:-Etc/UTC}
+      - NC_DB=pg://database-server:5432?u=nocodb&p=${DATABASE_PASSWORD}&d=nocodb
+      - NC_DISABLE_TELE=true
+      - NC_DISABLE_AUDIT=true
+      - NC_INVITE_ONLY_SIGNUP=true
+
+      # Database Connection Pool (max: 100, default: 10)
+      - DB_MAX_POOL_SIZE=${DB_MAX_POOL_SIZE:-45}
+
+      # SMTP Configuration
+      - NC_SMTP_HOST=${SMTP_HOST:-}
+      - NC_SMTP_PORT=${SMTP_PORT:-587}
+      - NC_SMTP_USERNAME=${SMTP_USER:-}
+      - NC_SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - NC_SMTP_SECURE=${SMTP_TLS:-true}
+      - NC_SMTP_IGNORE_TLS=${SMTP_CERTCHECK:-true}
+      - NC_SMTP_FROM=${SMTP_FROM_NAME:-NocoDB} <${SMTP_FROM:-}>
+
+      # Attachment Settings
+      - NC_ATTACHMENT_FIELD_SIZE=${NC_ATTACHMENT_FIELD_SIZE:-262144000}
+      - NC_MAX_ATTACHMENTS_ALLOWED=${NC_MAX_ATTACHMENTS_ALLOWED:-50}
+      - NC_SECURE_ATTACHMENTS=${NC_SECURE_ATTACHMENTS:-false}
+      - NC_ATTACHMENT_EXPIRE_SECONDS=${NC_ATTACHMENT_EXPIRE_SECONDS:-7200}
+
+      # S3 Storage (optional - for attachments)
+      - NC_S3_BUCKET_NAME=${NC_S3_BUCKET_NAME:-}
+      - NC_S3_REGION=${NC_S3_REGION:-}
+      - NC_S3_ENDPOINT=${NC_S3_ENDPOINT:-}
+      - NC_S3_ACCESS_KEY=${NC_S3_ACCESS_KEY:-}
+      - NC_S3_ACCESS_SECRET=${NC_S3_ACCESS_SECRET:-}
+      - NC_S3_FORCE_PATH_STYLE=${NC_S3_FORCE_PATH_STYLE:-true}
+      - NC_S3_ACL=${NC_S3_ACL:-private}
+    ports:
+      - "${EXPOSED_APP_PORT:-8080}:8080"
+    volumes:
+      - nocodb-data:/usr/app/data
+    depends_on:
+      database-server:
+        condition: service_healthy
+      nocodb-init:
+        condition: service_completed_successfully
+    networks:
+      local:
+
+
+  ### PostgreSQL Database ###
+  # Tuned for SSD/NVMe by default
+  # For HDD: Set PG_RANDOM_PAGE_COST=2.0, PG_EFFECTIVE_IO_CONCURRENCY=4 in .env
+  database-server:
+    image: postgres:${POSTGRES_VERSION:-18}
+    restart: unless-stopped
+    container_name: ${STACK_NAME:-nocodb-dev}_DATABASE
+    command: >
+      -c max_connections=${DATABASE_POOLMAXSIZE:-50}
+      -c shared_buffers=${PG_SHARED_BUFFERS:-2GB}
+      -c work_mem=${PG_WORK_MEM:-8MB}
+      -c effective_cache_size=${PG_EFFECTIVE_CACHE_SIZE:-4GB}
+      -c maintenance_work_mem=${PG_MAINTENANCE_WORK_MEM:-256MB}
+      -c max_wal_size=${PG_MAX_WAL_SIZE:-2GB}
+      -c min_wal_size=${PG_MIN_WAL_SIZE:-512MB}
+      -c random_page_cost=${PG_RANDOM_PAGE_COST:-1.1}
+      -c seq_page_cost=1.0
+      -c effective_io_concurrency=${PG_EFFECTIVE_IO_CONCURRENCY:-200}
+      -c max_parallel_workers_per_gather=2
+      -c max_parallel_workers=4
+      -c max_parallel_maintenance_workers=2
+      -c checkpoint_completion_target=0.9
+      -c wal_buffers=16MB
+      -c default_statistics_target=100
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nocodb -d nocodb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+    environment:
+      - TZ=${TIME_ZONE:-Etc/UTC}
+      - PG_TZ=${TIME_ZONE:-Etc/UTC}
+      - POSTGRES_DB=nocodb
+      - POSTGRES_USER=nocodb
+      - POSTGRES_PASSWORD=${DATABASE_PASSWORD}
+    expose:
+      - 5432/tcp
+    volumes:
+      - database-server:/var/lib/postgresql
+    networks:
+      local:
+
+
+  ### NocoDB Init Container ###
+  # One-shot container that initializes database settings (collation checks)
+  # Runs once before nocodb-server starts, then exits
+  nocodb-init:
+    build:
+      context: ./src/nocodb-init
+    container_name: ${STACK_NAME:-nocodb-dev}_INIT
+    restart: "no"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    environment:
+      # Timezone
+      - TZ=${TIME_ZONE:-Etc/UTC}
+
+      # Database Connection
+      - DB_HOST=database-server
+      - DB_PORT=5432
+      - DB_NAME=nocodb
+      - DB_USER=nocodb
+      - DB_PASSWORD=${DATABASE_PASSWORD}
+
+      # Task Configuration (set to "false" to disable)
+      - INIT_COLLATION_CHECK=${INIT_COLLATION_CHECK:-true}
+      - INIT_COLLATION_AUTO_FIX=${INIT_COLLATION_AUTO_FIX:-false}
+      - INIT_AUDIT_CLEANUP=${INIT_AUDIT_CLEANUP:-true}
+    depends_on:
+      database-server:
+        condition: service_healthy
+    networks:
+      local:
+
+
+  ### NocoDB Backup Sidecar (Optional) ###
+  # Activate with: docker compose -f docker-compose.development.yml --profile backup up --build -d
+  nocodb-backup:
+    build:
+      context: ./src/nocodb-backup
+    container_name: ${STACK_NAME:-nocodb-dev}_BACKUP
+    profiles: ["backup"]
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    environment:
+      # Timezone
+      - TZ=${TIME_ZONE:-Etc/UTC}
+
+      # Instance identification (for alerts)
+      - INSTANCE_NAME=${NOCODB_BACKUP_INSTANCE_NAME:-${STACK_NAME:-nocodb}}
+
+      # Database Connection
+      - DB_HOST=database-server
+      - DB_PORT=5432
+      - DB_NAME=nocodb
+      - DB_USER=nocodb
+      - DATABASE_PASSWORD=${DATABASE_PASSWORD}
+
+      # NocoDB API (for API-based backup)
+      - NOCODB_API_URL=http://nocodb-server:8080
+      - NOCODB_API_TOKEN=${NOCODB_API_TOKEN:-}
+
+      # Backup Configuration
+      - BACKUP_RETENTION_COUNT=${NOCODB_BACKUP_RETENTION_COUNT:-30}
+      - BACKUP_SCHEDULE_ENABLED=${NOCODB_BACKUP_SCHEDULE_ENABLED:-true}
+      - BACKUP_SCHEDULE_MODE=${NOCODB_BACKUP_SCHEDULE_MODE:-cron}
+      - BACKUP_SCHEDULE_HOUR=${NOCODB_BACKUP_SCHEDULE_HOUR:-5}
+      - BACKUP_SCHEDULE_MINUTE=${NOCODB_BACKUP_SCHEDULE_MINUTE:-15}
+      - BACKUP_SCHEDULE_DAY_OF_WEEK=${NOCODB_BACKUP_SCHEDULE_DAY_OF_WEEK:-*}
+      - BACKUP_SCHEDULE_INTERVAL_HOURS=${NOCODB_BACKUP_SCHEDULE_INTERVAL_HOURS:-24}
+      - BACKUP_DATABASE_DUMP=${NOCODB_BACKUP_DATABASE_DUMP:-true}
+      - BACKUP_DATABASE_DUMP_TIMEOUT=${NOCODB_BACKUP_DATABASE_DUMP_TIMEOUT:-1800}
+      - BACKUP_API_EXPORT=${NOCODB_BACKUP_API_EXPORT:-true}
+      - BACKUP_INCLUDE_RECORDS=${NOCODB_BACKUP_INCLUDE_RECORDS:-true}
+      - BACKUP_INCLUDE_ATTACHMENTS=${NOCODB_BACKUP_INCLUDE_ATTACHMENTS:-true}
+      - BACKUP_INCLUDE_FILES=${NOCODB_BACKUP_INCLUDE_FILES:-true}
+      - BACKUP_DELETE_LOCAL_AFTER_S3=${NOCODB_BACKUP_DELETE_LOCAL_AFTER_S3:-false}
+      - NOCODB_DATA_PATH=/nocodb-data
+
+      # S3 Storage (optional)
+      - S3_ENDPOINT_URL=${NOCODB_BACKUP_S3_ENDPOINT_URL:-http://minio:9000}
+      - S3_BUCKET=${NOCODB_BACKUP_S3_BUCKET:-nocodb-backups}
+      - S3_ACCESS_KEY=${NOCODB_BACKUP_S3_ACCESS_KEY:-nocodbbackup}
+      - S3_SECRET_KEY=${NOCODB_BACKUP_S3_SECRET_KEY:-nocodbbackup}
+      - S3_REGION=${NOCODB_BACKUP_S3_REGION:-eu-north-1}
+      - S3_PREFIX=${NOCODB_BACKUP_S3_PREFIX:-nocodb-backup}
+
+      # Alerting (optional)
+      - ALERT_ENABLED=${NOCODB_BACKUP_ALERT_ENABLED:-false}
+      - ALERT_LEVEL=${NOCODB_BACKUP_ALERT_LEVEL:-warnings}
+      - ALERT_CHANNELS=${NOCODB_BACKUP_ALERT_CHANNELS:-}
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASS=${SMTP_PASSWORD:-}
+      - SMTP_SENDER=${SMTP_FROM:-}
+      - SMTP_TO=${NOCODB_BACKUP_ALERT_EMAIL:-}
+      - TEAMS_WEBHOOK_URL=${NOCODB_BACKUP_TEAMS_WEBHOOK:-}
+      - WEBHOOK_URL=${NOCODB_BACKUP_WEBHOOK_URL:-}
+
+      # Logging
+      - LOG_LEVEL=${NOCODB_BACKUP_LOG_LEVEL:-INFO}
+    volumes:
+      - nocodb-backup-data:/data
+      - nocodb-data:/nocodb-data
+    depends_on:
+      database-server:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    networks:
+      local:
+
+
+  #############################################################################
+  # MinIO (Local S3 for Development)
+  #############################################################################
+  #
+  #   Console:  http://localhost:9001
+  #   API:      http://localhost:9000
+  #
+  #   Activate with: docker compose -f docker-compose.development.yml --profile minio up -d
+  #   Or with backup: docker compose -f docker-compose.development.yml --profile backup up -d
+  #
+  #   For external S3, don't start this profile - just configure NOCODB_BACKUP_S3_* vars.
+  #
+  #############################################################################
+
+  minio:
+    image: minio/minio:latest
+    container_name: ${STACK_NAME:-nocodb-dev}_MINIO
+    profiles: ["minio", "backup"]
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      MINIO_REGION: ${NOCODB_BACKUP_S3_REGION:-eu-north-1}
+    volumes:
+      - minio-data:/data
+    ports:
+      - "${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      local:
+
+
+  #############################################################################
+  # MinIO Init (Creates bucket and service user for NocoDB backup)
+  #############################################################################
+
+  minio-init:
+    image: minio/mc:latest
+    container_name: ${STACK_NAME:-nocodb-dev}_MINIO_INIT
+    profiles: ["minio", "backup"]
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      # MinIO Admin Credentials
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+
+      # Backup Service User (created for nocodb-backup)
+      S3_ACCESS_KEY: ${NOCODB_BACKUP_S3_ACCESS_KEY:-nocodbbackup}
+      S3_SECRET_KEY: ${NOCODB_BACKUP_S3_SECRET_KEY:-nocodbbackup}
+      S3_BUCKET: ${NOCODB_BACKUP_S3_BUCKET:-nocodb-backups}
+      S3_REGION: ${NOCODB_BACKUP_S3_REGION:-eu-north-1}
+      S3_PREFIX: ${NOCODB_BACKUP_S3_PREFIX:-nocodb-backup}
+    networks:
+      local:
+    restart: "no"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+
+        echo ""
+        echo "================================================================"
+        echo "  MinIO Initialization for NocoDB Backup"
+        echo "================================================================"
+        echo ""
+
+        # Configure MinIO client
+        mc alias set storage http://minio:9000 $${MINIO_ROOT_USER} $${MINIO_ROOT_PASSWORD}
+
+        echo "Bucket:       $${S3_BUCKET}"
+        echo "Region:       $${S3_REGION}"
+        echo "Prefix:       $${S3_PREFIX}"
+        echo "Service User: $${S3_ACCESS_KEY}"
+        echo ""
+
+        # Create bucket if not exists (with region)
+        if mc ls storage/$${S3_BUCKET} >/dev/null 2>&1; then
+          echo "+ Bucket '$${S3_BUCKET}' already exists"
+        else
+          echo "Creating bucket '$${S3_BUCKET}' in region '$${S3_REGION}'..."
+          mc mb storage/$${S3_BUCKET} --region $${S3_REGION}
+          echo "+ Bucket created"
+        fi
+
+        # Set bucket to private
+        mc anonymous set none storage/$${S3_BUCKET}
+
+        # Create/recreate service user for nocodb-backup (ensures password is current)
+        if mc admin user info storage $${S3_ACCESS_KEY} >/dev/null 2>&1; then
+          echo "Recreating service user '$${S3_ACCESS_KEY}' with current credentials..."
+          mc admin user remove storage $${S3_ACCESS_KEY}
+        fi
+        mc admin user add storage $${S3_ACCESS_KEY} $${S3_SECRET_KEY}
+        echo "+ Service user '$${S3_ACCESS_KEY}' ready"
+
+        # Create policy for bucket access
+        POLICY_NAME="nocodb-backup-policy"
+        POLICY_FILE="/tmp/policy.json"
+
+        cat > $${POLICY_FILE} << EOF
+        {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Action": [
+                "s3:GetObject",
+                "s3:PutObject",
+                "s3:DeleteObject",
+                "s3:ListBucket",
+                "s3:GetBucketLocation",
+                "s3:AbortMultipartUpload",
+                "s3:ListMultipartUploadParts",
+                "s3:ListBucketMultipartUploads"
+              ],
+              "Resource": [
+                "arn:aws:s3:::$${S3_BUCKET}",
+                "arn:aws:s3:::$${S3_BUCKET}/*"
+              ]
+            }
+          ]
+        }
+        EOF
+
+        # Apply policy
+        mc admin policy create storage $${POLICY_NAME} $${POLICY_FILE} 2>/dev/null || \
+          mc admin policy info storage $${POLICY_NAME} >/dev/null 2>&1
+        mc admin policy attach storage $${POLICY_NAME} --user $${S3_ACCESS_KEY} 2>/dev/null || true
+        echo "+ Policy '$${POLICY_NAME}' attached to user"
+
+        echo ""
+        echo "================================================================"
+        echo "  MinIO Ready"
+        echo "================================================================"
+        echo ""
+        echo "  Console:  http://localhost:9001"
+        echo "  API:      http://minio:9000 (internal)"
+        echo ""
+        echo "  nocodb-backup config:"
+        echo "    S3_ENDPOINT_URL=http://minio:9000"
+        echo "    S3_BUCKET=$${S3_BUCKET}"
+        echo "    S3_ACCESS_KEY=$${S3_ACCESS_KEY}"
+        echo "    S3_SECRET_KEY=***"
+        echo "    S3_PREFIX=$${S3_PREFIX}"
+        echo ""
+
+
+### Volumes ###
+volumes:
+  nocodb-data:
+    driver: local
+    name: ${STACK_NAME:-nocodb-dev}-nocodb
+
+  database-server:
+    driver: local
+    name: ${STACK_NAME:-nocodb-dev}-postgres
+
+  nocodb-backup-data:
+    driver: local
+    name: ${STACK_NAME:-nocodb-dev}-nocodb-backup
+
+  minio-data:
+    driver: local
+    name: ${STACK_NAME:-nocodb-dev}-minio
+
+
+### Networks ###
+networks:
+  local:
+    driver: bridge
+    name: ${STACK_NAME:-nocodb-dev}
+    enable_ipv6: true

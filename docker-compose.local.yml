@@ -17,7 +17,7 @@ services:
 
   ### Application Service ###
   nocodb-server:
-    image: nocodb/nocodb:${NOCODB_VERSION:-latest}
+    image: ${NOCODB_IMAGE:-ghcr.io/bauer-group/cs-nocodb/nocodb}:${NOCODB_VERSION:-latest}
     restart: unless-stopped
     container_name: ${STACK_NAME}_SERVER
     healthcheck:
@@ -53,10 +53,57 @@ services:
       # Attachment Settings
       - NC_ATTACHMENT_FIELD_SIZE=${NC_ATTACHMENT_FIELD_SIZE:-262144000}
       - NC_MAX_ATTACHMENTS_ALLOWED=${NC_MAX_ATTACHMENTS_ALLOWED:-50}
+      - NC_SECURE_ATTACHMENTS=${NC_SECURE_ATTACHMENTS:-false}
+      - NC_ATTACHMENT_EXPIRE_SECONDS=${NC_ATTACHMENT_EXPIRE_SECONDS:-7200}
+
+      # S3 Storage (optional - for attachments)
+      - NC_S3_BUCKET_NAME=${NC_S3_BUCKET_NAME:-}
+      - NC_S3_REGION=${NC_S3_REGION:-}
+      - NC_S3_ENDPOINT=${NC_S3_ENDPOINT:-}
+      - NC_S3_ACCESS_KEY=${NC_S3_ACCESS_KEY:-}
+      - NC_S3_ACCESS_SECRET=${NC_S3_ACCESS_SECRET:-}
+      - NC_S3_FORCE_PATH_STYLE=${NC_S3_FORCE_PATH_STYLE:-true}
+      - NC_S3_ACL=${NC_S3_ACL:-private}
     ports:
       - "${EXPOSED_APP_PORT:-8080}:8080"
     volumes:
       - nocodb-data:/usr/app/data
+    depends_on:
+      database-server:
+        condition: service_healthy
+      nocodb-init:
+        condition: service_completed_successfully
+    networks:
+      local:
+
+
+  ### NocoDB Init Container ###
+  # One-shot container that initializes database settings (collation checks)
+  # Runs once before nocodb-server starts, then exits
+  nocodb-init:
+    image: ${NOCODB_INIT_IMAGE:-ghcr.io/bauer-group/cs-nocodb/nocodb-init}:${NOCODB_INIT_VERSION:-latest}
+    container_name: ${STACK_NAME}_INIT
+    restart: "no"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    environment:
+      # Timezone
+      - TZ=${TIME_ZONE:-Etc/UTC}
+
+      # Database Connection
+      - DB_HOST=database-server
+      - DB_PORT=5432
+      - DB_NAME=nocodb
+      - DB_USER=nocodb
+      - DB_PASSWORD=${DATABASE_PASSWORD}
+
+      # Task Configuration (set to "false" to disable)
+      - INIT_COLLATION_CHECK=${INIT_COLLATION_CHECK:-true}
+      - INIT_COLLATION_AUTO_FIX=${INIT_COLLATION_AUTO_FIX:-false}
+      - INIT_AUDIT_CLEANUP=${INIT_AUDIT_CLEANUP:-true}
     depends_on:
       database-server:
         condition: service_healthy
@@ -113,6 +160,88 @@ services:
       local:
 
 
+  ### NocoDB Backup Sidecar (Optional) ###
+  # Activate with: docker compose -f docker-compose.local.yml --profile backup up -d
+  nocodb-backup:
+    image: ${NOCODB_BACKUP_IMAGE:-ghcr.io/bauer-group/cs-nocodb/nocodb-backup}:${NOCODB_BACKUP_VERSION:-latest}
+    container_name: ${STACK_NAME}_BACKUP
+    profiles: ["backup"]
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    environment:
+      # Timezone
+      - TZ=${TIME_ZONE:-Etc/UTC}
+
+      # Instance identification (for alerts)
+      - INSTANCE_NAME=${NOCODB_BACKUP_INSTANCE_NAME:-${STACK_NAME:-nocodb}}
+
+      # Database Connection
+      - DB_HOST=database-server
+      - DB_PORT=5432
+      - DB_NAME=nocodb
+      - DB_USER=nocodb
+      - DATABASE_PASSWORD=${DATABASE_PASSWORD}
+
+      # NocoDB API (for API-based backup)
+      - NOCODB_API_URL=http://nocodb-server:8080
+      - NOCODB_API_TOKEN=${NOCODB_API_TOKEN:-}
+
+      # Backup Configuration
+      - BACKUP_RETENTION_COUNT=${NOCODB_BACKUP_RETENTION_COUNT:-30}
+      - BACKUP_SCHEDULE_ENABLED=${NOCODB_BACKUP_SCHEDULE_ENABLED:-true}
+      - BACKUP_SCHEDULE_MODE=${NOCODB_BACKUP_SCHEDULE_MODE:-cron}
+      - BACKUP_SCHEDULE_HOUR=${NOCODB_BACKUP_SCHEDULE_HOUR:-5}
+      - BACKUP_SCHEDULE_MINUTE=${NOCODB_BACKUP_SCHEDULE_MINUTE:-15}
+      - BACKUP_SCHEDULE_DAY_OF_WEEK=${NOCODB_BACKUP_SCHEDULE_DAY_OF_WEEK:-*}
+      - BACKUP_SCHEDULE_INTERVAL_HOURS=${NOCODB_BACKUP_SCHEDULE_INTERVAL_HOURS:-24}
+      - BACKUP_DATABASE_DUMP=${NOCODB_BACKUP_DATABASE_DUMP:-true}
+      - BACKUP_DATABASE_DUMP_TIMEOUT=${NOCODB_BACKUP_DATABASE_DUMP_TIMEOUT:-1800}
+      - BACKUP_API_EXPORT=${NOCODB_BACKUP_API_EXPORT:-true}
+      - BACKUP_INCLUDE_RECORDS=${NOCODB_BACKUP_INCLUDE_RECORDS:-true}
+      - BACKUP_INCLUDE_ATTACHMENTS=${NOCODB_BACKUP_INCLUDE_ATTACHMENTS:-true}
+      - BACKUP_INCLUDE_FILES=${NOCODB_BACKUP_INCLUDE_FILES:-true}
+      - BACKUP_DELETE_LOCAL_AFTER_S3=${NOCODB_BACKUP_DELETE_LOCAL_AFTER_S3:-false}
+      - NOCODB_DATA_PATH=/nocodb-data
+
+      # S3 Storage (optional)
+      - S3_ENDPOINT_URL=${NOCODB_BACKUP_S3_ENDPOINT_URL:-}
+      - S3_BUCKET=${NOCODB_BACKUP_S3_BUCKET:-}
+      - S3_ACCESS_KEY=${NOCODB_BACKUP_S3_ACCESS_KEY:-}
+      - S3_SECRET_KEY=${NOCODB_BACKUP_S3_SECRET_KEY:-}
+      - S3_REGION=${NOCODB_BACKUP_S3_REGION:-eu-north-1}
+      - S3_PREFIX=${NOCODB_BACKUP_S3_PREFIX:-nocodb-backup}
+
+      # Alerting (optional)
+      - ALERT_ENABLED=${NOCODB_BACKUP_ALERT_ENABLED:-false}
+      - ALERT_LEVEL=${NOCODB_BACKUP_ALERT_LEVEL:-warnings}
+      - ALERT_CHANNELS=${NOCODB_BACKUP_ALERT_CHANNELS:-}
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASS=${SMTP_PASSWORD:-}
+      - SMTP_SENDER=${SMTP_FROM:-}
+      - SMTP_TO=${NOCODB_BACKUP_ALERT_EMAIL:-}
+      - TEAMS_WEBHOOK_URL=${NOCODB_BACKUP_TEAMS_WEBHOOK:-}
+      - WEBHOOK_URL=${NOCODB_BACKUP_WEBHOOK_URL:-}
+
+      # Logging
+      - LOG_LEVEL=${NOCODB_BACKUP_LOG_LEVEL:-INFO}
+    volumes:
+      - nocodb-backup-data:/data
+      - nocodb-data:/nocodb-data
+    depends_on:
+      database-server:
+        condition: service_healthy
+      nocodb-server:
+        condition: service_healthy
+    networks:
+      local:
+
+
 ### Volumes ###
 volumes:
   nocodb-data:
@@ -122,6 +251,10 @@ volumes:
   database-server:
     driver: local
     name: ${STACK_NAME}-postgres
+
+  nocodb-backup-data:
+    driver: local
+    name: ${STACK_NAME}-nocodb-backup
 
 
 ### Networks ###

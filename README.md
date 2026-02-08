@@ -5,9 +5,11 @@ Production-ready Docker Compose Setup für [NocoDB](https://nocodb.com/) mit Pos
 ## Features
 
 - **PostgreSQL 18** mit Production-Tuning (SSD/NVMe optimiert)
-- **4 Deployment-Modi** für verschiedene Umgebungen
+- **5 Deployment-Modi** fuer verschiedene Umgebungen
+- **Automatisierte Backups** mit S3-Support und Alerting
+- **Init Container** fuer Datenbank-Wartung (Collation Check/Auto-Fix)
 - **IPv4 + IPv6** Dual-Stack Netzwerk
-- **Healthchecks** für alle Services
+- **Healthchecks** fuer alle Services
 - **Strukturierte Logs** mit Rotation
 - **Umfangreiche Dokumentation** auf Deutsch
 
@@ -38,6 +40,7 @@ open http://localhost:8080
 | **Traefik** | `docker-compose.traefik.yml` | HTTPS + Let's Encrypt | Production |
 | **Traefik Local** | `docker-compose.traefik-local.yml` | HTTP + IP-Whitelist | Internes Netzwerk |
 | **Traefik Header Auth** | `docker-compose.traefik-header-auth.yml` | HTTPS + Header-Auth | API-Zugriff, Reverse Proxy |
+| **Development** | `docker-compose.development.yml` | Lokale Image-Builds + MinIO | Entwicklung, Testing |
 
 ### Local Mode
 
@@ -73,7 +76,7 @@ docker compose -f docker-compose.traefik-local.yml up -d
 
 ### Traefik Header Auth
 
-HTTPS mit zusätzlicher Header-Authentifizierung - ideal für API-Zugriffe:
+HTTPS mit zusaetzlicher Header-Authentifizierung - ideal fuer API-Zugriffe:
 
 ```bash
 docker compose -f docker-compose.traefik-header-auth.yml up -d
@@ -85,6 +88,42 @@ docker compose -f docker-compose.traefik-header-auth.yml up -d
 # Beispiel curl-Aufruf
 curl -H "X-BAUERGROUP-Auth: your-secret" https://db.example.com/api/v2/...
 ```
+
+### Development Mode
+
+Fuer lokale Entwicklung mit Image-Builds und MinIO:
+
+```bash
+# Build und Start
+docker compose -f docker-compose.development.yml up -d --build
+
+# Mit Backup-Sidecar und MinIO
+docker compose -f docker-compose.development.yml --profile backup up -d --build
+```
+
+**Features:**
+- Lokale Image-Builds aus `src/` Verzeichnis
+- MinIO als lokaler S3-Ersatz (Port 9001)
+- Ideal fuer Testing von Backup-Funktionen
+
+## Backup-Sidecar
+
+Alle Compose-Files unterstuetzen einen optionalen Backup-Sidecar:
+
+```bash
+# Aktivieren mit --profile backup
+docker compose -f docker-compose.traefik.yml --profile backup up -d
+```
+
+**Features:**
+- Automatische PostgreSQL-Dumps (pg_dump)
+- NocoDB API Export (Bases, Tables, Records, Attachments)
+- S3-kompatibles Storage (AWS S3, MinIO, Wasabi, etc.)
+- Cron oder Interval Scheduling
+- Alerting (Email, Teams, Webhook)
+- CLI fuer manuelle Backups und Restore
+
+Siehe [docs/BACKUP.md](docs/BACKUP.md) fuer die vollstaendige Dokumentation.
 
 ## Konfiguration
 
@@ -164,9 +203,39 @@ NocoDB/
 ├── docker-compose.traefik.yml            # Traefik HTTPS
 ├── docker-compose.traefik-local.yml      # Traefik HTTP + IP-Whitelist
 ├── docker-compose.traefik-header-auth.yml # Traefik HTTPS + Header-Auth
+├── docker-compose.development.yml        # Development mit MinIO
+│
+├── src/
+│   ├── nocodb/                           # NocoDB Base Image (Custom Build)
+│   │   └── Dockerfile
+│   │
+│   ├── nocodb-init/                      # Init Container (Collation Check)
+│   │   ├── Dockerfile
+│   │   ├── main.py
+│   │   └── tasks/
+│   │       └── 01_collation_check.py
+│   │
+│   └── nocodb-backup/                    # Backup Sidecar Container
+│       ├── Dockerfile
+│       ├── requirements.txt
+│       ├── main.py                       # Entry Point
+│       ├── cli.py                        # CLI fuer manuelle Operationen
+│       ├── config.py                     # Konfiguration (Pydantic Settings)
+│       ├── scheduler.py                  # Cron/Interval Scheduler
+│       ├── backup/                       # Backup-Module
+│       │   ├── pg_dump.py               # PostgreSQL Dump
+│       │   └── nocodb_exporter.py       # NocoDB API Export
+│       ├── storage/
+│       │   └── s3_client.py             # S3-kompatibles Storage
+│       ├── alerting/                     # Benachrichtigungen
+│       │   ├── email_alerter.py
+│       │   ├── teams_alerter.py
+│       │   └── webhook_alerter.py
+│       └── tests/                        # Unit Tests
 │
 ├── docs/
 │   ├── AUDIT_CLEANUP.md                  # Audit-Tabellen Bereinigung
+│   ├── BACKUP.md                         # Backup & Recovery Dokumentation
 │   └── PG_UPGRADE.md                     # PostgreSQL Upgrade Anleitung
 │
 └── tools/
@@ -188,20 +257,40 @@ docker compose -f docker-compose.traefik.yml logs -f nocodb-server
 docker compose -f docker-compose.traefik.yml logs -f database-server
 ```
 
-### Backup erstellen
+### Automatisiertes Backup (empfohlen)
+
+Mit aktiviertem Backup-Sidecar:
+
+```bash
+# Backup-Sidecar aktivieren
+docker compose -f docker-compose.traefik.yml --profile backup up -d
+
+# Sofort-Backup ausfuehren
+docker exec ${STACK_NAME}_BACKUP python main.py --now
+
+# Backups auflisten
+docker exec ${STACK_NAME}_BACKUP python cli.py list
+
+# Datenbank wiederherstellen
+docker exec ${STACK_NAME}_BACKUP python cli.py restore-dump 2024-02-05_05-15-00
+```
+
+Siehe [docs/BACKUP.md](docs/BACKUP.md) fuer Details.
+
+### Manuelles Backup
 
 ```bash
 # Datenbank-Dump
 docker exec ${STACK_NAME}_DATABASE pg_dump -U nocodb nocodb > backup_$(date +%Y%m%d).sql
 
-# Volume-Backup (empfohlen)
+# Volume-Backup
 docker run --rm \
   -v ${STACK_NAME}-postgres:/data:ro \
   -v $(pwd):/backup \
   alpine tar czf /backup/postgres_$(date +%Y%m%d).tar.gz -C /data .
 ```
 
-### Backup wiederherstellen
+### Manuelles Backup wiederherstellen
 
 ```bash
 # Aus SQL-Dump
