@@ -1,3 +1,9 @@
+## [0.6.2](https://github.com/bauer-group/CS-NocoDB/compare/v0.6.1...v0.6.2) (2026-02-08)
+
+### 🐛 Bug Fixes
+
+* aktualisiere SMTP-Konfiguration für E-Mail-Benachrichtigungen und verbessere Fehlerbehandlung ([d36980e](https://github.com/bauer-group/CS-NocoDB/commit/d36980ed4b8ada3db3c33d681cd45c6b46f4f2b3))
+
 ## [0.6.1](https://github.com/bauer-group/CS-NocoDB/compare/v0.6.0...v0.6.1) (2026-02-08)
 
 ### 🐛 Bug Fixes
