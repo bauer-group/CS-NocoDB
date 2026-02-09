@@ -1,3 +1,9 @@
+## [0.6.4](https://github.com/bauer-group/CS-NocoDB/compare/v0.6.3...v0.6.4) (2026-02-09)
+
+### 🐛 Bug Fixes
+
+* entferne die Funktion zur automatischen Behebung von Kollationsmismatches und verbessere die Fehlerberichterstattung ([ae2b0d5](https://github.com/bauer-group/CS-NocoDB/commit/ae2b0d5f6838a6a1741b80cd9951aa76d5d91aae))
+
 ## [0.6.3](https://github.com/bauer-group/CS-NocoDB/compare/v0.6.2...v0.6.3) (2026-02-09)
 
 ## [0.6.2](https://github.com/bauer-group/CS-NocoDB/compare/v0.6.1...v0.6.2) (2026-02-08)
