@@ -1,3 +1,5 @@
+## [0.6.3](https://github.com/bauer-group/CS-NocoDB/compare/v0.6.2...v0.6.3) (2026-02-09)
+
 ## [0.6.2](https://github.com/bauer-group/CS-NocoDB/compare/v0.6.1...v0.6.2) (2026-02-08)
 
 ### 🐛 Bug Fixes
