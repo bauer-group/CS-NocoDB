@@ -398,8 +398,14 @@ Diese Einstellungen sind in allen Compose-Files vorkonfiguriert:
 In `.env` konfigurierbar:
 
 ```bash
+# Query & Bulk Operation Limits
+DB_QUERY_LIMIT_MAX=1000              # Max Records pro GET-Request (default: 100)
+NC_DATA_PAYLOAD_LIMIT=100000         # Max Entities pro Bulk-Request (default: 100)
+NC_REQUEST_BODY_SIZE=268435456       # 256 MB - Max Request-Body
+
 # Attachment-Limits
-NC_ATTACHMENT_FIELD_SIZE=262144000  # 256 MB
+NC_ATTACHMENT_FIELD_SIZE=268435456   # 256 MB
+NC_NON_ATTACHMENT_FIELD_SIZE=268435456  # 256 MB
 NC_MAX_ATTACHMENTS_ALLOWED=50
 
 # Sichere Attachments (Pre-signed URLs)
@@ -902,8 +908,14 @@ These settings are preconfigured in all compose files:
 Configurable in `.env`:
 
 ```bash
+# Query & bulk operation limits
+DB_QUERY_LIMIT_MAX=1000              # Max records per GET request (default: 100)
+NC_DATA_PAYLOAD_LIMIT=100000         # Max entities per bulk request (default: 100)
+NC_REQUEST_BODY_SIZE=268435456       # 256 MB - Max request body
+
 # Attachment limits
-NC_ATTACHMENT_FIELD_SIZE=262144000  # 256 MB
+NC_ATTACHMENT_FIELD_SIZE=268435456   # 256 MB
+NC_NON_ATTACHMENT_FIELD_SIZE=268435456  # 256 MB
 NC_MAX_ATTACHMENTS_ALLOWED=50
 
 # Secure attachments (pre-signed URLs)
