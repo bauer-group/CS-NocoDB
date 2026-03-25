@@ -2,7 +2,7 @@
 
 # NocoDB Server-Migration (manuell)
 
-> Manueller Migrations-Workflow mit PostgreSQL-Bordmitteln (`pg_dump` / `psql`).
+> Manueller Migrations-Workflow mit PostgreSQL-Bordmitteln (`pg_dump` / `pg_restore`).
 > Fuer den Umzug von einem Altserver auf einen neuen Server — auch bei
 > PostgreSQL-Versionswechsel (z.B. PG 15 → PG 18).
 >
@@ -20,13 +20,18 @@ SERVER A (alt)                              SERVER B (neu)
 │  (beliebiges Setup)     │                 │                         │
 │                         │                 │  3. Stack deployen      │
 │  1. Container finden    │                 │     (nur DB + Init)     │
-│  2. pg_dump ausfuehren  │                 │                         │
-│     + Volumes sichern   │──── SCP ───────►│  4. psql restore        │
+│  2. pg_dump -F c        │                 │                         │
+│     + Volumes sichern   │──── SCP ───────►│  4. pg_restore -j 4    │
 │                         │                 │  5. Volumes restore     │
 │                         │                 │  6. NocoDB starten      │
 │                         │                 │  7. Verifizierung       │
 └─────────────────────────┘                 └─────────────────────────┘
 ```
+
+| Daten | Quelle | Methode |
+|-------|--------|---------|
+| Datenbank | `database-server` Container | `pg_dump -F c` → `pg_restore -j 4` |
+| Uploads & Attachments | `nocodb-data` Volume | `tar` + `scp`/`rsync` |
 
 ### Voraussetzungen
 
@@ -39,7 +44,7 @@ SERVER A (alt)                              SERVER B (neu)
 
 ### PostgreSQL-Versionskompatibilitaet
 
-pg_dump erzeugt reines SQL (`--format plain`). Dieses SQL ist vorwaertskompatibel:
+pg_dump im Custom Format (`-F c`) ist vorwaertskompatibel:
 
 | Quelle (Server A) | Ziel (Server B) | Kompatibel |
 |--------------------|-----------------|:----------:|
@@ -48,9 +53,14 @@ pg_dump erzeugt reines SQL (`--format plain`). Dieses SQL ist vorwaertskompatibe
 | PG 16 → | PG 18 | Ja |
 | PG 18 → | PG 15 | Nein (Downgrade) |
 
-> **Hinweis:** pg_dump wird innerhalb des laufenden PostgreSQL-Containers auf Server A
-> ausgefuehrt. Die pg_dump-Version entspricht der installierten PG-Version (z.B. v15).
-> Fuer plain-SQL-Format ist das unproblematisch — PG 18 kann das SQL einlesen.
+### Warum Custom Format (`-F c`) statt Plain SQL?
+
+| Feature | Plain (`-F p` + `psql`) | Custom (`-F c` + `pg_restore`) |
+|---------|-------------------------|--------------------------------|
+| Paralleler Restore | Nein (single-threaded) | **`-j 4` (multi-threaded)** |
+| Schema-Cleanup | Manuell (SQL-Befehle) | **`--clean --if-exists`** |
+| Komprimierung | Separates `gzip` noetig | **Eingebaut** |
+| Cross-Version PG 15 → 18 | Ja | **Ja** |
 
 ---
 
@@ -117,36 +127,44 @@ docker stop $NOCODB_CONTAINER
 ### Schritt 3: Datenbank-Dump erstellen (Altserver)
 
 ```bash
-# pg_dump direkt im PostgreSQL-Container ausfuehren
+# pg_dump im Custom Format direkt im PostgreSQL-Container ausfuehren
 docker exec $PG_CONTAINER pg_dump \
     -U $DB_USER \
     -d $DB_NAME \
-    --format=plain \
+    --format=custom \
     --no-owner \
     --no-acl \
     --verbose \
-    | gzip > nocodb_dump.sql.gz
+    > nocodb_migration.dump
 ```
 
 **Parameter erklaert:**
 
 | Parameter | Zweck |
 |-----------|-------|
-| `--format=plain` | SQL-Textformat, versionsuebergreifend kompatibel |
+| `--format=custom` | Binaerformat, bereits komprimiert, paralleler Restore moeglich |
 | `--no-owner` | Keine `ALTER OWNER`-Befehle — Rollen muessen nicht uebereinstimmen |
 | `--no-acl` | Keine `GRANT`/`REVOKE`-Befehle — Berechtigungen werden vom neuen Stack gesetzt |
 | `--verbose` | Fortschritt auf stderr ausgeben |
-| `\| gzip` | Komprimierung auf dem Host (spart Speicher + Transferzeit) |
+
+> **Hinweis:** `-j` (parallel) ist bei `pg_dump` nur mit Directory Format (`-F d`) moeglich.
+> Custom Format (`-F c`) erzeugt eine einzelne Datei — ideal fuer den Transfer via SCP.
+> Der parallele Restore (`pg_restore -j 4`) funktioniert mit Custom Format.
 
 **Dump pruefen:**
 
 ```bash
 # Dateigroesse pruefen (sollte > 0 sein)
-ls -lh nocodb_dump.sql.gz
+ls -lh nocodb_migration.dump
 
-# Inhalt stichprobenartig pruefen (erste 20 Zeilen)
-gunzip -c nocodb_dump.sql.gz | head -20
-# Erwartung: SQL-Header mit "-- PostgreSQL database dump" und Version
+# Dump-Inhalt inspizieren (Tabellen und Schemas auflisten)
+docker exec $PG_CONTAINER pg_restore \
+    --list nocodb_migration.dump 2>/dev/null | head -30
+
+# Falls pg_restore nicht verfuegbar (Dump liegt auf dem Host):
+# Kurzer Smoke-Test: Custom-Format beginnt mit "PGDMP"
+head -c 5 nocodb_migration.dump
+# Erwartung: PGDMP
 ```
 
 ### Schritt 4: NocoDB-Datenverzeichnis sichern (Altserver)
@@ -183,14 +201,14 @@ ls -lh nocodb-data.tar.gz
 
 ```bash
 # Von Server A nach Server B kopieren
-scp nocodb_dump.sql.gz user@server-b:/tmp/migration/
+scp nocodb_migration.dump user@server-b:/tmp/migration/
 scp nocodb-data.tar.gz user@server-b:/tmp/migration/   # falls vorhanden
 ```
 
 **Alternativ mit rsync (fuer grosse Dateien, resumable):**
 
 ```bash
-rsync -avP nocodb_dump.sql.gz user@server-b:/tmp/migration/
+rsync -avP nocodb_migration.dump user@server-b:/tmp/migration/
 rsync -avP nocodb-data.tar.gz user@server-b:/tmp/migration/
 ```
 
@@ -218,12 +236,6 @@ docker compose -f docker-compose.traefik.yml up nocodb-init
 
 ### Schritt 7: Datenbank wiederherstellen (Server B)
 
-#### 7a. Alle Schemas bereinigen (vor dem Restore)
-
-Die Datenbank muss vor dem Einspielen des Dumps vollstaendig geleert werden.
-NocoDB erstellt neben `public` (Metadaten) auch **ein Schema pro Base** mit
-zufaelligem Namen (z.B. `p5jsz0gcohesakm`). Alle muessen entfernt werden.
-
 ```bash
 # Source STACK_NAME aus .env
 source .env
@@ -231,57 +243,46 @@ source .env
 # WICHTIG: NocoDB darf NICHT laufen!
 docker compose -f docker-compose.traefik.yml stop nocodb-server 2>/dev/null || true
 
-# Alle benutzerdefinierten Schemas anzeigen (Kontrolle)
-docker exec ${STACK_NAME}_DATABASE psql -U nocodb -d nocodb -c \
-    "SELECT schema_name FROM information_schema.schemata
-     WHERE schema_name NOT IN ('pg_catalog', 'information_schema', 'pg_toast');"
+# Dump in den Container kopieren
+docker cp /tmp/migration/nocodb_migration.dump ${STACK_NAME}_DATABASE:/tmp/
 
-# Alle benutzerdefinierten Schemas loeschen + public neu erstellen
-docker exec ${STACK_NAME}_DATABASE psql -U nocodb -d nocodb <<'EOSQL'
-DO $$
-DECLARE
-    schema_rec RECORD;
-BEGIN
-    -- Alle benutzerdefinierten Schemas loeschen (inkl. public + NocoDB Base-Schemas)
-    FOR schema_rec IN
-        SELECT schema_name FROM information_schema.schemata
-        WHERE schema_name NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
-    LOOP
-        EXECUTE format('DROP SCHEMA %I CASCADE', schema_rec.schema_name);
-        RAISE NOTICE 'Dropped schema: %', schema_rec.schema_name;
-    END LOOP;
-END
-$$;
-
--- Public-Schema neu erstellen (wird von PostgreSQL erwartet)
-CREATE SCHEMA public;
-EOSQL
+# Restore mit 4 parallelen Jobs
+docker exec ${STACK_NAME}_DATABASE pg_restore \
+    -U nocodb \
+    -d nocodb \
+    -j 4 \
+    --verbose \
+    --clean \
+    --if-exists \
+    --no-owner \
+    --no-acl \
+    /tmp/nocodb_migration.dump
 ```
 
-> **Was macht das?**
+**Parameter erklaert:**
+
+| Parameter | Zweck |
+|-----------|-------|
+| `-j 4` | 4 parallele Worker — beschleunigt den Restore signifikant |
+| `--clean` | Bestehende Objekte droppen vor Neuanlage |
+| `--if-exists` | Kein Fehler wenn Objekte noch nicht existieren |
+| `--no-owner` | Ownership ignorieren (alles gehoert `nocodb` User) |
+| `--no-acl` | ACLs ignorieren (keine Rollenprobleme bei Migration) |
+
+> **Was macht `--clean --if-exists`?**
 >
-> - Loescht **alle** benutzerdefinierten Schemas: `public` (NocoDB-Metadaten) und
->   die Base-Schemas (z.B. `p5jsz0gcohesakm`, `p7b2ba84i7hjgzi`, ...)
-> - `CASCADE` entfernt alle enthaltenen Objekte (Tabellen, Sequenzen, Views, etc.)
-> - `CREATE SCHEMA public` erstellt ein sauberes, leeres public-Schema
-> - System-Schemas (`pg_catalog`, `information_schema`) bleiben unangetastet
-> - Die Datenbank (`nocodb`) und die Rolle (`nocodb`) bleiben erhalten
+> Diese Kombination loest das Schema-Bereinigungsproblem automatisch:
+> pg_restore generiert `DROP ... IF EXISTS`-Befehle fuer alle Objekte im Dump
+> bevor sie neu angelegt werden. Das betrifft sowohl das `public`-Schema
+> (NocoDB-Metadaten) als auch die NocoDB-Base-Schemas (z.B. `p5jsz0gcohesakm`).
+> Ein manuelles Schema-Cleanup ist nicht noetig.
 
-#### 7b. Dump einspielen
+**Moegliche Warnungen (unbedenklich):**
 
-```bash
-# Dump in die neue PG 18-Datenbank einspielen
-gunzip -c /tmp/migration/nocodb_dump.sql.gz | \
-    docker exec -i ${STACK_NAME}_DATABASE psql -U nocodb -d nocodb --quiet
+```text
+pg_restore: warning: errors ignored on restore: 3
+# → Typisch: DROP-Befehle fuer Objekte die noch nicht existieren (bei frischer DB)
 ```
-
-> **Was passiert hier?**
->
-> 1. `gunzip -c` entpackt den Dump in eine Pipe (ohne Datei auf Disk)
-> 2. `docker exec -i` leitet stdin in den Container weiter
-> 3. `psql` fuehrt das SQL in der neuen PG 18-Datenbank aus
-> 4. PostgreSQL 18 interpretiert das von PG 15 erzeugte SQL problemlos
-> 5. Durch das vorherige Schema-Clean gibt es keine Konflikte
 
 **Erfolg pruefen:**
 
@@ -290,9 +291,17 @@ gunzip -c /tmp/migration/nocodb_dump.sql.gz | \
 docker exec ${STACK_NAME}_DATABASE psql -U nocodb -d nocodb -c \
     "SELECT count(*) AS tables FROM information_schema.tables WHERE table_schema = 'public';"
 
+# NocoDB-Base-Schemas muessen vorhanden sein
+docker exec ${STACK_NAME}_DATABASE psql -U nocodb -d nocodb -c \
+    "SELECT schema_name FROM information_schema.schemata
+     WHERE schema_name NOT IN ('pg_catalog', 'information_schema', 'pg_toast', 'public');"
+
 # Stichprobe: Bases zaehlen
 docker exec ${STACK_NAME}_DATABASE psql -U nocodb -d nocodb -c \
     "SELECT count(*) AS bases FROM nc_bases_v2;"
+
+# Dump-Datei im Container aufraeumen
+docker exec ${STACK_NAME}_DATABASE rm /tmp/nocodb_migration.dump
 ```
 
 ### Schritt 8: Daten-Dateien wiederherstellen (Server B)
@@ -419,14 +428,14 @@ Vorbereitung:
 Server A - Backup:
   [ ] PostgreSQL-Container identifiziert: ____________________
   [ ] NocoDB-Container gestoppt
-  [ ] pg_dump erfolgreich: nocodb_dump.sql.gz (Groesse: ________)
+  [ ] pg_dump erfolgreich: nocodb_migration.dump (Groesse: ________)
   [ ] nocodb-data.tar.gz erstellt (Groesse: ________) oder N/A (S3)
   [ ] Dateien auf Server B uebertragen
 
 Server B - Wiederherstellung:
   [ ] Datenbank gestartet und bereit
   [ ] Init-Container ausgefuehrt
-  [ ] psql restore erfolgreich
+  [ ] pg_restore erfolgreich
   [ ] Daten-Dateien entpackt (oder N/A bei S3)
   [ ] NocoDB gestartet
 
@@ -462,7 +471,7 @@ docker ps -a | grep postgres
 docker logs $PG_CONTAINER --tail 20
 ```
 
-### "role nocodb does not exist" bei psql restore
+### "role nocodb does not exist" bei pg_restore
 
 Die Rolle wurde noch nicht erstellt. Sicherstellen dass der Init-Container gelaufen ist:
 
@@ -496,8 +505,17 @@ Oder automatisch: `INIT_COLLATION_AUTO_FIX=true` in `.env` und Init-Container au
 docker exec ${STACK_NAME}_DATABASE vacuumdb -U nocodb --all --analyze-in-stages
 ```
 
-### "ERROR: relation already exists" oder "schema already exists"
+### pg_restore meldet "errors ignored on restore"
 
-Schritt 7a wurde uebersprungen oder nicht vollstaendig ausgefuehrt.
-Alle Schemas muessen vor dem Restore bereinigt werden — siehe Schritt 7a.
-Danach den Dump erneut einspielen (Schritt 7b).
+Wenige Fehler sind normal — typischerweise `DROP`-Befehle fuer Objekte die bei einer
+frischen Datenbank noch nicht existieren. `--clean --if-exists` erzeugt diese Warnungen.
+
+Pruefen ob die Daten korrekt sind:
+
+```bash
+docker exec ${STACK_NAME}_DATABASE psql -U nocodb -d nocodb -c \
+    "SELECT count(*) FROM nc_bases_v2;"
+```
+
+Falls die Tabelle nicht existiert, ist der Restore tatsaechlich fehlgeschlagen.
+Dump und pg_restore-Ausgabe pruefen.
