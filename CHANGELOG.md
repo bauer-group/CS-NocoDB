@@ -1,3 +1,13 @@
+## [0.6.8](https://github.com/bauer-group/CS-NocoDB/compare/v0.6.7...v0.6.8) (2026-03-19)
+
+## [0.6.7](https://github.com/bauer-group/CS-NocoDB/compare/v0.6.6...v0.6.7) (2026-03-17)
+
+## [0.6.6](https://github.com/bauer-group/CS-NocoDB/compare/v0.6.5...v0.6.6) (2026-03-05)
+
+### 🐛 Bug Fixes
+
+* update environment configuration and Docker Compose files for query and bulk operation limits ([94cd743](https://github.com/bauer-group/CS-NocoDB/commit/94cd7436d9e7b30c4eec9703a7961c72f95f97f4))
+
 ## [0.6.5](https://github.com/bauer-group/CS-NocoDB/compare/v0.6.4...v0.6.5) (2026-02-28)
 
 ## [0.6.4](https://github.com/bauer-group/CS-NocoDB/compare/v0.6.3...v0.6.4) (2026-02-09)
