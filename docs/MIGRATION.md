@@ -218,10 +218,58 @@ docker compose -f docker-compose.traefik.yml up nocodb-init
 
 ### Schritt 7: Datenbank wiederherstellen (Server B)
 
+#### 7a. Alle Schemas bereinigen (vor dem Restore)
+
+Die Datenbank muss vor dem Einspielen des Dumps vollstaendig geleert werden.
+NocoDB erstellt neben `public` (Metadaten) auch **ein Schema pro Base** mit
+zufaelligem Namen (z.B. `p5jsz0gcohesakm`). Alle muessen entfernt werden.
+
 ```bash
 # Source STACK_NAME aus .env
 source .env
 
+# WICHTIG: NocoDB darf NICHT laufen!
+docker compose -f docker-compose.traefik.yml stop nocodb-server 2>/dev/null || true
+
+# Alle benutzerdefinierten Schemas anzeigen (Kontrolle)
+docker exec ${STACK_NAME}_DATABASE psql -U nocodb -d nocodb -c \
+    "SELECT schema_name FROM information_schema.schemata
+     WHERE schema_name NOT IN ('pg_catalog', 'information_schema', 'pg_toast');"
+
+# Alle benutzerdefinierten Schemas loeschen + public neu erstellen
+docker exec ${STACK_NAME}_DATABASE psql -U nocodb -d nocodb <<'EOSQL'
+DO $$
+DECLARE
+    schema_rec RECORD;
+BEGIN
+    -- Alle benutzerdefinierten Schemas loeschen (inkl. public + NocoDB Base-Schemas)
+    FOR schema_rec IN
+        SELECT schema_name FROM information_schema.schemata
+        WHERE schema_name NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
+    LOOP
+        EXECUTE format('DROP SCHEMA %I CASCADE', schema_rec.schema_name);
+        RAISE NOTICE 'Dropped schema: %', schema_rec.schema_name;
+    END LOOP;
+END
+$$;
+
+-- Public-Schema neu erstellen (wird von PostgreSQL erwartet)
+CREATE SCHEMA public;
+EOSQL
+```
+
+> **Was macht das?**
+>
+> - Loescht **alle** benutzerdefinierten Schemas: `public` (NocoDB-Metadaten) und
+>   die Base-Schemas (z.B. `p5jsz0gcohesakm`, `p7b2ba84i7hjgzi`, ...)
+> - `CASCADE` entfernt alle enthaltenen Objekte (Tabellen, Sequenzen, Views, etc.)
+> - `CREATE SCHEMA public` erstellt ein sauberes, leeres public-Schema
+> - System-Schemas (`pg_catalog`, `information_schema`) bleiben unangetastet
+> - Die Datenbank (`nocodb`) und die Rolle (`nocodb`) bleiben erhalten
+
+#### 7b. Dump einspielen
+
+```bash
 # Dump in die neue PG 18-Datenbank einspielen
 gunzip -c /tmp/migration/nocodb_dump.sql.gz | \
     docker exec -i ${STACK_NAME}_DATABASE psql -U nocodb -d nocodb --quiet
@@ -233,14 +281,7 @@ gunzip -c /tmp/migration/nocodb_dump.sql.gz | \
 > 2. `docker exec -i` leitet stdin in den Container weiter
 > 3. `psql` fuehrt das SQL in der neuen PG 18-Datenbank aus
 > 4. PostgreSQL 18 interpretiert das von PG 15 erzeugte SQL problemlos
-
-**Moegliche Warnungen (unbedenklich):**
-
-```text
-# Tabellen/Sequenzen existieren schon (vom Init-Container) — werden ueberschrieben
-ERROR:  relation "..." already exists
-# → Normal bei clean install, pg_dump verwendet CREATE OR REPLACE wo moeglich
-```
+> 5. Durch das vorherige Schema-Clean gibt es keine Konflikte
 
 **Erfolg pruefen:**
 
@@ -455,14 +496,8 @@ Oder automatisch: `INIT_COLLATION_AUTO_FIX=true` in `.env` und Init-Container au
 docker exec ${STACK_NAME}_DATABASE vacuumdb -U nocodb --all --analyze-in-stages
 ```
 
-### "ERROR: relation already exists" waehrend psql restore
+### "ERROR: relation already exists" oder "schema already exists"
 
-Unbedenklich. Der Init-Container hat bereits eine leere Datenbank angelegt.
-Die Daten werden trotzdem korrekt importiert. Alternativ vor dem Restore
-die Datenbank leeren:
-
-```bash
-# ACHTUNG: Loescht alle Daten in der Datenbank!
-docker exec ${STACK_NAME}_DATABASE psql -U nocodb -d nocodb -c \
-    "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
-```
+Schritt 7a wurde uebersprungen oder nicht vollstaendig ausgefuehrt.
+Alle Schemas muessen vor dem Restore bereinigt werden — siehe Schritt 7a.
+Danach den Dump erneut einspielen (Schritt 7b).
