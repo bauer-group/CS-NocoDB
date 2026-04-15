@@ -124,6 +124,19 @@ Alle Compose-Files unterstuetzen einen optionalen Backup-Sidecar:
 docker compose -f docker-compose.traefik.yml --profile backup up -d
 ```
 
+**Dauerhaft aktivieren ueber `COMPOSE_PROFILES`:** Docker Compose liest die
+Standardvariable `COMPOSE_PROFILES` aus der `.env`. Damit muss `--profile backup`
+nicht mehr bei jedem `up` angegeben werden:
+
+```bash
+# in .env
+COMPOSE_PROFILES=backup
+```
+
+Danach reicht `docker compose up -d` — der Backup-Sidecar startet automatisch mit.
+Mehrere Profile sind komma-separiert (`COMPOSE_PROFILES=backup,minio`). Zum
+temporaeren Deaktivieren leer lassen (`COMPOSE_PROFILES=`) oder Zeile entfernen.
+
 **Features:**
 - Automatische PostgreSQL-Dumps (pg_dump)
 - NocoDB API Export (Bases, Tables, Records, Attachments)
