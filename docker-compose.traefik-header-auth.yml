@@ -50,8 +50,9 @@ services:
       - NC_INVITE_ONLY_SIGNUP=true
 
       # Database Connection Pool (max: 100, default: 10)
-      # Hochlast-Profil: 80 Connections fuer 1000+ parallele Inserts
-      - DB_MAX_POOL_SIZE=${DB_MAX_POOL_SIZE:-80}
+      # Compose-Default: Production-Profil (50 Connections, ~5-20 User)
+      # Hochlast-Tuning (1000+ parallel) -> in .env: DB_MAX_POOL_SIZE=80
+      - DB_MAX_POOL_SIZE=${DB_MAX_POOL_SIZE:-50}
 
       # Query & Bulk Operation Limits (NocoDB defaults: 100 - here 1000)
       - DB_QUERY_LIMIT_DEFAULT=${DB_QUERY_LIMIT_DEFAULT:-25}
@@ -62,12 +63,14 @@ services:
       - NC_DATA_PAYLOAD_LIMIT=${NC_DATA_PAYLOAD_LIMIT:-100000}
       - NC_REQUEST_BODY_SIZE=${NC_REQUEST_BODY_SIZE:-268435456}
 
-      # API Rate Limiting (Hochlast / 1000+ parallele Requests)
-      # Default ist 5 req/sec mit 30s Block - viel zu eng fuer Burst-Workloads
+      # API Rate Limiting
+      # Data-API-Default 5 req/sec mit 30s Block ist zu eng - generelles
+      # Compose-Default deshalb 5000/sec ohne Block (deckt n8n/ETL ab).
+      # Meta-API (DDL) bleibt nahe NocoDB-Default - wird selten genutzt.
       - NC_RATE_LIMIT_DATA_API_MAX_REQUESTS=${NC_RATE_LIMIT_DATA_API_MAX_REQUESTS:-5000}
       - NC_RATE_LIMIT_DATA_API_DURATION=${NC_RATE_LIMIT_DATA_API_DURATION:-1000}
       - NC_RATE_LIMIT_DATA_API_BLOCK_DURATION=${NC_RATE_LIMIT_DATA_API_BLOCK_DURATION:-0}
-      - NC_RATE_LIMIT_META_API_MAX_REQUESTS=${NC_RATE_LIMIT_META_API_MAX_REQUESTS:-600}
+      - NC_RATE_LIMIT_META_API_MAX_REQUESTS=${NC_RATE_LIMIT_META_API_MAX_REQUESTS:-120}
       - NC_RATE_LIMIT_META_API_BLOCK_DURATION=${NC_RATE_LIMIT_META_API_BLOCK_DURATION:-0}
 
       # SMTP Configuration
@@ -186,13 +189,13 @@ services:
     restart: unless-stopped
     container_name: ${STACK_NAME}_DATABASE
     command: >
-      -c max_connections=${DATABASE_POOLMAXSIZE:-120}
-      -c shared_buffers=${PG_SHARED_BUFFERS:-4GB}
-      -c work_mem=${PG_WORK_MEM:-16MB}
-      -c effective_cache_size=${PG_EFFECTIVE_CACHE_SIZE:-12GB}
-      -c maintenance_work_mem=${PG_MAINTENANCE_WORK_MEM:-512MB}
-      -c max_wal_size=${PG_MAX_WAL_SIZE:-4GB}
-      -c min_wal_size=${PG_MIN_WAL_SIZE:-1GB}
+      -c max_connections=${DATABASE_POOLMAXSIZE:-60}
+      -c shared_buffers=${PG_SHARED_BUFFERS:-2GB}
+      -c work_mem=${PG_WORK_MEM:-8MB}
+      -c effective_cache_size=${PG_EFFECTIVE_CACHE_SIZE:-6GB}
+      -c maintenance_work_mem=${PG_MAINTENANCE_WORK_MEM:-256MB}
+      -c max_wal_size=${PG_MAX_WAL_SIZE:-2GB}
+      -c min_wal_size=${PG_MIN_WAL_SIZE:-512MB}
       -c random_page_cost=${PG_RANDOM_PAGE_COST:-1.1}
       -c seq_page_cost=1.0
       -c effective_io_concurrency=${PG_EFFECTIVE_IO_CONCURRENCY:-200}
