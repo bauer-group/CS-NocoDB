@@ -63,15 +63,16 @@ services:
       - NC_DATA_PAYLOAD_LIMIT=${NC_DATA_PAYLOAD_LIMIT:-100000}
       - NC_REQUEST_BODY_SIZE=${NC_REQUEST_BODY_SIZE:-268435456}
 
-      # API Rate Limiting
-      # Data-API-Default 5 req/sec mit 30s Block ist zu eng - generelles
-      # Compose-Default deshalb 5000/sec ohne Block (deckt n8n/ETL ab).
-      # Meta-API (DDL) bleibt nahe NocoDB-Default - wird selten genutzt.
-      - NC_RATE_LIMIT_DATA_API_MAX_REQUESTS=${NC_RATE_LIMIT_DATA_API_MAX_REQUESTS:-5000}
-      - NC_RATE_LIMIT_DATA_API_DURATION=${NC_RATE_LIMIT_DATA_API_DURATION:-1000}
-      - NC_RATE_LIMIT_DATA_API_BLOCK_DURATION=${NC_RATE_LIMIT_DATA_API_BLOCK_DURATION:-0}
-      - NC_RATE_LIMIT_META_API_MAX_REQUESTS=${NC_RATE_LIMIT_META_API_MAX_REQUESTS:-120}
-      - NC_RATE_LIMIT_META_API_BLOCK_DURATION=${NC_RATE_LIMIT_META_API_BLOCK_DURATION:-0}
+      # API Rate Limiting (fest verdrahtet - API-Zugriff ist Token-gated)
+      # NocoDB-Defaults (5 req/sec mit 30s Block) sind fuer reale Workloads
+      # untauglich. Da nur autorisierte API-Token-Inhaber zugreifen koennen,
+      # ist Konfigurierbarkeit hier kein Wert - hochgesetzte Limits gelten
+      # fuer alle Instanzen.
+      - NC_RATE_LIMIT_DATA_API_MAX_REQUESTS=5000
+      - NC_RATE_LIMIT_DATA_API_DURATION=1000
+      - NC_RATE_LIMIT_DATA_API_BLOCK_DURATION=0
+      - NC_RATE_LIMIT_META_API_MAX_REQUESTS=120
+      - NC_RATE_LIMIT_META_API_BLOCK_DURATION=0
 
       # SMTP Configuration
       - NC_SMTP_HOST=${SMTP_HOST}
