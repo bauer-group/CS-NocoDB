@@ -1,3 +1,9 @@
+## [0.6.16](https://github.com/bauer-group/CS-NocoDB/compare/v0.6.15...v0.6.16) (2026-05-07)
+
+### ♻️ Refactoring
+
+* **stack:** hardcoded API rate limits as compose-level constants ([317926c](https://github.com/bauer-group/CS-NocoDB/commit/317926c026dcf4544011f7f9355c549cf81f8a83))
+
 ## [0.6.15](https://github.com/bauer-group/CS-NocoDB/compare/v0.6.14...v0.6.15) (2026-05-07)
 
 ### ⚡ Performance
