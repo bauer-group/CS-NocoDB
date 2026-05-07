@@ -1,3 +1,13 @@
+## [0.6.15](https://github.com/bauer-group/CS-NocoDB/compare/v0.6.14...v0.6.15) (2026-05-07)
+
+### ⚡ Performance
+
+* **stack:** tuned NocoDB and Postgres for high-load burst workloads ([27c30bd](https://github.com/bauer-group/CS-NocoDB/commit/27c30bd7eb1700eabe193aa369304a814c9c83d3))
+
+### ♻️ Refactoring
+
+* **stack:** rebased compose defaults to standard 8GB-RAM profile ([3a6c2a0](https://github.com/bauer-group/CS-NocoDB/commit/3a6c2a0924522907d91eb809dc0e5c82f8ee9f19))
+
 ## [0.6.14](https://github.com/bauer-group/CS-NocoDB/compare/v0.6.13...v0.6.14) (2026-05-01)
 
 ## [0.6.13](https://github.com/bauer-group/CS-NocoDB/compare/v0.6.12...v0.6.13) (2026-04-24)
