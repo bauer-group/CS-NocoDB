@@ -1,3 +1,5 @@
+## [0.6.17](https://github.com/bauer-group/CS-NocoDB/compare/v0.6.16...v0.6.17) (2026-05-09)
+
 ## [0.6.16](https://github.com/bauer-group/CS-NocoDB/compare/v0.6.15...v0.6.16) (2026-05-07)
 
 ### ♻️ Refactoring
