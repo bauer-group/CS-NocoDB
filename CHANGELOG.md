@@ -1,3 +1,9 @@
+## [0.6.25](https://github.com/bauer-group/CS-NocoDB/compare/v0.6.24...v0.6.25) (2026-06-19)
+
+### 🐛 Bug Fixes
+
+* **compose:** relaxed nocodb healthcheck for load spikes ([e05fb0e](https://github.com/bauer-group/CS-NocoDB/commit/e05fb0e07848da9ab01f36341f349b2205eae251))
+
 ## [0.6.24](https://github.com/bauer-group/CS-NocoDB/compare/v0.6.23...v0.6.24) (2026-06-16)
 
 ## [0.6.23](https://github.com/bauer-group/CS-NocoDB/compare/v0.6.22...v0.6.23) (2026-06-15)
