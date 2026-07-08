@@ -1,3 +1,9 @@
+## [0.7.0](https://github.com/bauer-group/CS-NocoDB/compare/v0.6.26...v0.7.0) (2026-07-08)
+
+### 🚀 Features
+
+* **backup:** migrated the backup sidecar onto the central BackupHelper engine ([5cb425d](https://github.com/bauer-group/CS-NocoDB/commit/5cb425de3e728ad457a5db86e29e4f1b6ff69384))
+
 ## [0.6.26](https://github.com/bauer-group/CS-NocoDB/compare/v0.6.25...v0.6.26) (2026-06-29)
 
 ## [0.6.25](https://github.com/bauer-group/CS-NocoDB/compare/v0.6.24...v0.6.25) (2026-06-19)
