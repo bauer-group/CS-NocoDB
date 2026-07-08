@@ -81,8 +81,9 @@ def open_export(snapshot_id: str, *, job_name: Optional[str] = None) -> Iterator
     comp = next((c for c in manifest.components if c.kind == "nocodb" and not c.error), None)
     if comp is None:
         raise SnapshotError(
-            f"snapshot {snapshot_id} contains no NocoDB REST export "
-            "(was BACKUP_API_EXPORT enabled when it was taken?)"
+            f"snapshot {snapshot_id} contains no NocoDB REST export — the API export "
+            "was not captured when this backup ran (check BACKUP_API_EXPORT=true AND "
+            "that NOCODB_API_TOKEN was set; an unset token skips the export)"
         )
 
     with tempfile.TemporaryDirectory(prefix="nocodb-restore-") as td:
