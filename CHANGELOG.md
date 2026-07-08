@@ -1,3 +1,9 @@
+## [0.7.1](https://github.com/bauer-group/CS-NocoDB/compare/v0.7.0...v0.7.1) (2026-07-08)
+
+### 🐛 Bug Fixes
+
+* **backup:** clarified the missing-REST-export restore diagnostic ([a7359ea](https://github.com/bauer-group/CS-NocoDB/commit/a7359ea7b1aea9c52d072ce2c79ef9d6e22870b8))
+
 ## [0.7.0](https://github.com/bauer-group/CS-NocoDB/compare/v0.6.26...v0.7.0) (2026-07-08)
 
 ### 🚀 Features
