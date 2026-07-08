@@ -1,3 +1,9 @@
+## [0.7.2](https://github.com/bauer-group/CS-NocoDB/compare/v0.7.1...v0.7.2) (2026-07-08)
+
+### 🐛 Bug Fixes
+
+* **backup:** kept record<->new-id lockstep on a failed insert batch ([cdc84b0](https://github.com/bauer-group/CS-NocoDB/commit/cdc84b0d53243ae7501583952a6834fb158023bd))
+
 ## [0.7.1](https://github.com/bauer-group/CS-NocoDB/compare/v0.7.0...v0.7.1) (2026-07-08)
 
 ### 🐛 Bug Fixes
