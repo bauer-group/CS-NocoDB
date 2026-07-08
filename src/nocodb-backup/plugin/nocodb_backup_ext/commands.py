@@ -218,6 +218,39 @@ def _restore_attachments_for_table(
     return uploaded, errors
 
 
+def _insert_records_batched(client, table_id, clean_records, orig_records, collect_ids, batch_size=100):
+    """Insert clean_records into a table in batches. Returns
+    (restored_count, inserted_orig_records, new_record_ids, errors).
+
+    inserted_orig_records and new_record_ids are kept in **lockstep**: only rows
+    from batches that actually succeeded are appended, each paired with the id
+    NocoDB returned for it. A failed batch therefore never shifts the positional
+    record<->new-id mapping the attachment relink relies on.
+    """
+    restored = 0
+    inserted: list = []
+    new_ids: list = []
+    errs: list = []
+    for i in range(0, len(clean_records), batch_size):
+        batch = clean_records[i:i + batch_size]
+        orig_batch = orig_records[i:i + batch_size]
+        try:
+            resp = client.post(f"/api/v2/tables/{table_id}/records", json=batch)
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            errs.append((i, len(batch), e.response.status_code))
+            continue
+        restored += len(batch)
+        if collect_ids:
+            created = resp.json()
+            rows = created if isinstance(created, list) else (
+                created.get("list", []) if isinstance(created, dict) else [])
+            for orig, rec in zip(orig_batch, rows):  # zip guards a short id response
+                inserted.append(orig)
+                new_ids.append(rec.get("Id") or rec.get("id", ""))
+    return restored, inserted, new_ids, errs
+
+
 def _iter_base_dirs(bases_dir: Path, base: Optional[str]):
     for base_path in sorted(bases_dir.iterdir()):
         if base_path.is_dir() and (not base or base_path.name == base):
@@ -466,34 +499,24 @@ def restore_records(
                     clean_records = [{k: v for k, v in r.items() if k not in strip_fields}
                                      for r in all_records]
 
-                    batch_size = 100
-                    table_restored = 0
-                    new_record_ids: list = []
-                    for i in range(0, len(clean_records), batch_size):
-                        batch = clean_records[i:i + batch_size]
-                        try:
-                            resp = client.post(f"/api/v2/tables/{table_id}/records", json=batch)
-                            resp.raise_for_status()
-                            table_restored += len(batch)
-                            if with_attachments and attachment_fields:
-                                created = resp.json()
-                                if isinstance(created, list):
-                                    new_record_ids.extend(rec.get("Id") or rec.get("id", "") for rec in created)
-                                elif isinstance(created, dict) and "list" in created:
-                                    new_record_ids.extend(rec.get("Id") or rec.get("id", "") for rec in created["list"])
-                        except httpx.HTTPStatusError as e:
-                            typer.echo(f"  ! batch error in {base_name}/{table_name} "
-                                       f"(records {i}-{i + len(batch)}): {e.response.status_code}")
-                            errors += 1
+                    collect_ids = bool(with_attachments and attachment_fields)
+                    table_restored, inserted_records, new_record_ids, batch_errs = _insert_records_batched(
+                        client, table_id, clean_records, all_records, collect_ids)
+                    for off, size, status in batch_errs:
+                        typer.echo(f"  ! batch error in {base_name}/{table_name} "
+                                   f"(records {off}-{off + size}): {status}")
+                        errors += 1
 
                     restored += table_restored
                     typer.echo(f"  + {base_name}/{table_name}: {table_restored} record(s) restored")
 
                     if with_attachments and attachment_fields and new_record_ids:
                         storage_path = f"nc/{base_id}/{table_id}"
+                        # inserted_records is in lockstep with new_record_ids (only rows
+                        # from succeeded batches), so the positional relink stays correct.
                         up, err = _restore_attachments_for_table(
                             client, upload_client, table_id, table_dir,
-                            all_records, attachment_fields, new_record_ids, storage_path)
+                            inserted_records, attachment_fields, new_record_ids, storage_path)
                         att_uploaded += up
                         errors += err
                         if up:
