@@ -217,66 +217,61 @@ services:
         max-size: "10m"
         max-file: "3"
     environment:
-      # Timezone
-      - TZ=${TIME_ZONE:-Etc/UTC}
-
-      # Instance identification (for alerts)
-      - INSTANCE_NAME=${NOCODB_BACKUP_INSTANCE_NAME:-${STACK_NAME:-nocodb}}
-
-      # Database Connection
-      - DB_HOST=database-server
-      - DB_PORT=5432
-      - DB_NAME=nocodb
-      - DB_USER=nocodb
-      - DATABASE_PASSWORD=${DATABASE_PASSWORD}
-
-      # NocoDB API (for API-based backup)
-      - NOCODB_API_URL=http://nocodb-server:8080
-      - NOCODB_API_TOKEN=${NOCODB_API_TOKEN:-}
-
-      # Backup Configuration
-      - BACKUP_RETENTION_COUNT=${NOCODB_BACKUP_RETENTION_COUNT:-30}
-      - BACKUP_SCHEDULE_ENABLED=${NOCODB_BACKUP_SCHEDULE_ENABLED:-true}
-      - BACKUP_SCHEDULE_MODE=${NOCODB_BACKUP_SCHEDULE_MODE:-cron}
-      - BACKUP_SCHEDULE_HOUR=${NOCODB_BACKUP_SCHEDULE_HOUR:-5}
-      - BACKUP_SCHEDULE_MINUTE=${NOCODB_BACKUP_SCHEDULE_MINUTE:-15}
-      - BACKUP_SCHEDULE_DAY_OF_WEEK=${NOCODB_BACKUP_SCHEDULE_DAY_OF_WEEK:-*}
-      - BACKUP_SCHEDULE_INTERVAL_HOURS=${NOCODB_BACKUP_SCHEDULE_INTERVAL_HOURS:-24}
-      - BACKUP_DATABASE_DUMP=${NOCODB_BACKUP_DATABASE_DUMP:-true}
-      - BACKUP_DATABASE_DUMP_TIMEOUT=${NOCODB_BACKUP_DATABASE_DUMP_TIMEOUT:-1800}
-      - BACKUP_API_EXPORT=${NOCODB_BACKUP_API_EXPORT:-true}
-      - BACKUP_INCLUDE_RECORDS=${NOCODB_BACKUP_INCLUDE_RECORDS:-true}
-      - BACKUP_INCLUDE_ATTACHMENTS=${NOCODB_BACKUP_INCLUDE_ATTACHMENTS:-true}
-      - BACKUP_INCLUDE_FILES=${NOCODB_BACKUP_INCLUDE_FILES:-true}
-      - BACKUP_DELETE_LOCAL_AFTER_S3=${NOCODB_BACKUP_DELETE_LOCAL_AFTER_S3:-false}
-      - NOCODB_DATA_PATH=/nocodb-data
-
-      # S3 Storage (optional)
-      - S3_ENDPOINT_URL=${NOCODB_BACKUP_S3_ENDPOINT_URL:-}
-      - S3_BUCKET=${NOCODB_BACKUP_S3_BUCKET:-}
-      - S3_ACCESS_KEY=${NOCODB_BACKUP_S3_ACCESS_KEY:-}
-      - S3_SECRET_KEY=${NOCODB_BACKUP_S3_SECRET_KEY:-}
-      - S3_REGION=${NOCODB_BACKUP_S3_REGION:-eu-north-1}
-      - S3_PREFIX=${NOCODB_BACKUP_S3_PREFIX:-nocodb-backup}
-
-      # Alerting (optional)
-      - ALERT_ENABLED=${NOCODB_BACKUP_ALERT_ENABLED:-false}
-      - ALERT_LEVEL=${NOCODB_BACKUP_ALERT_LEVEL:-warnings}
-      - ALERT_CHANNELS=${NOCODB_BACKUP_ALERT_CHANNELS:-}
-      - SMTP_HOST=${SMTP_HOST:-}
-      - SMTP_PORT=${SMTP_PORT:-587}
-      - SMTP_USER=${SMTP_USER:-}
-      - SMTP_TLS=${SMTP_TLS:-true}
-      - SMTP_SSL=${SMTP_SSL:-false}
-      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
-      - SMTP_FROM=${SMTP_FROM:-}
-      - SMTP_FROM_NAME=${SMTP_FROM_NAME:-NocoDB Backup}
-      - SMTP_TO=${NOCODB_BACKUP_ALERT_EMAIL:-}
-      - TEAMS_WEBHOOK_URL=${NOCODB_BACKUP_TEAMS_WEBHOOK:-}
-      - WEBHOOK_URL=${NOCODB_BACKUP_WEBHOOK_URL:-}
-
-      # Logging
-      - LOG_LEVEL=${NOCODB_BACKUP_LOG_LEVEL:-INFO}
+      TZ: ${TIME_ZONE:-Etc/UTC}
+      BACKUP_LOG_LEVEL: ${NOCODB_BACKUP_LOG_LEVEL:-INFO}
+      BACKUP_LOG_FORMAT: ${NOCODB_BACKUP_LOG_FORMAT:-console}
+      # Secrets resolved by the container at runtime (kept out of the rendered config)
+      DB_PASSWORD: ${DATABASE_PASSWORD}
+      NOCODB_API_TOKEN: ${NOCODB_API_TOKEN:-}
+      BACKUP_S3_SECRET_KEY: ${NOCODB_BACKUP_S3_SECRET_KEY:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      WEBHOOK_SECRET: ${NOCODB_BACKUP_WEBHOOK_SECRET:-}
+      # NocoDB REST endpoint - also read directly by the `nocodb restore-*` commands
+      NOCODB_API_URL: ${NOCODB_API_URL:-http://nocodb-server:8080}
+      # BackupHelper engine config. Non-secret values interpolated by compose from
+      # .env; secrets use $${VAR} so the engine/plugin resolves them at runtime from
+      # the container env (never written into the rendered config).
+      BACKUP_CONFIG_JSON: |
+        {
+          "instance_name": "${NOCODB_BACKUP_INSTANCE_NAME:-${STACK_NAME:-nocodb}}",
+          "jobs": [{
+            "name": "main",
+            "keep_local": ${NOCODB_BACKUP_KEEP_LOCAL_ARCHIVE:-true},
+            "sources": [
+              {"type": "postgres", "name": "database", "enabled": ${NOCODB_BACKUP_DATABASE_DUMP:-true},
+               "host": "database-server", "port": 5432, "database": "nocodb", "user": "nocodb",
+               "password": "$${DB_PASSWORD}", "ssl_mode": "disable", "dump_format": "plain",
+               "timeout": ${NOCODB_BACKUP_DATABASE_DUMP_TIMEOUT:-1800}},
+              {"type": "filesystem", "name": "nocodb-data", "enabled": ${NOCODB_BACKUP_INCLUDE_FILES:-true},
+               "path": "/nocodb-data"},
+              {"type": "nocodb-rest", "name": "nocodb", "enabled": ${NOCODB_BACKUP_API_EXPORT:-true},
+               "api_url": "${NOCODB_API_URL:-http://nocodb-server:8080}", "token": "$${NOCODB_API_TOKEN}",
+               "include_records": ${NOCODB_BACKUP_INCLUDE_RECORDS:-true},
+               "include_attachments": ${NOCODB_BACKUP_INCLUDE_ATTACHMENTS:-true}}
+            ],
+            "destinations": [
+              {"type": "local"},
+              {"type": "s3", "endpoint": "${NOCODB_BACKUP_S3_ENDPOINT_URL:-}", "bucket": "${NOCODB_BACKUP_S3_BUCKET:-}",
+               "access_key": "${NOCODB_BACKUP_S3_ACCESS_KEY:-}", "secret_key": "$${BACKUP_S3_SECRET_KEY}",
+               "region": "${NOCODB_BACKUP_S3_REGION:-eu-north-1}", "prefix": "${NOCODB_BACKUP_S3_PREFIX:-nocodb/}"}
+            ],
+            "schedule": {"mode": "${NOCODB_BACKUP_SCHEDULE_MODE:-cron}",
+                         "hour": "${NOCODB_BACKUP_SCHEDULE_HOUR:-5}", "minute": "${NOCODB_BACKUP_SCHEDULE_MINUTE:-15}",
+                         "day_of_week": "${NOCODB_BACKUP_SCHEDULE_DAY_OF_WEEK:-*}",
+                         "interval_hours": ${NOCODB_BACKUP_SCHEDULE_INTERVAL_HOURS:-24},
+                         "on_startup": ${NOCODB_BACKUP_ON_STARTUP:-false}},
+            "retention": {"count": ${NOCODB_BACKUP_RETENTION_COUNT:-30}},
+            "notifications": {
+              "channels": "${NOCODB_BACKUP_ALERT_CHANNELS:-}",
+              "level": "${NOCODB_BACKUP_ALERT_LEVEL:-warnings}",
+              "email": {"host": "${SMTP_HOST:-}", "port": ${SMTP_PORT:-587}, "tls": ${SMTP_TLS:-true},
+                        "username": "${SMTP_USER:-}", "password": "$${SMTP_PASSWORD}",
+                        "sender": "${SMTP_FROM:-}", "recipients": ["${NOCODB_BACKUP_ALERT_EMAIL:-}"]},
+              "webhook": {"url": "${NOCODB_BACKUP_WEBHOOK_URL:-}", "secret": "$${WEBHOOK_SECRET}"},
+              "teams": {"url": "${NOCODB_BACKUP_TEAMS_WEBHOOK:-}"}
+            }
+          }]
+        }
     volumes:
       - nocodb-backup-data:/data
       - nocodb-data:/nocodb-data

@@ -11,9 +11,16 @@
     {
       "name": "python-alpine",
       "image": "python",
-      "tag": "3.13-alpine",
+      "tag": "3.14-alpine",
       "variable": "PYTHON_ALPINE_DIGEST",
-      "description": "Python Alpine base image for nocodb-init and nocodb-backup"
+      "description": "Python Alpine base image for nocodb-init"
+    },
+    {
+      "name": "backuphelper",
+      "image": "ghcr.io/bauer-group/cs-backuphelper/backuphelper",
+      "tag": "latest",
+      "variable": "BACKUPHELPER_LATEST_DIGEST",
+      "description": "Central BackupHelper engine - base for the src/nocodb-backup meta image; rebuilds when the digest moves"
     }
   ],
   "settings": {

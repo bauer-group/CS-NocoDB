@@ -3,6 +3,12 @@
 # NocoDB Backup & Recovery
 
 > **Language / Sprache:** [Deutsch](#deutsch) | [English](#english)
+>
+> **Engine:** The backup sidecar runs on the central **BackupHelper** engine
+> (`ghcr.io/bauer-group/cs-backuphelper`) plus the NocoDB extension plugin. The
+> CLI is `backuphelper`; NocoDB-specific restores live under `backuphelper nocodb
+> restore-schema|restore-records|restore-attachments`, the DB dump and data-file
+> restores under `backuphelper restore <id> --only database|nocodb-data`.
 
 ---
 
@@ -216,16 +222,16 @@ Der Backup-Container bietet ein CLI für manuelle Operationen:
 
 ```bash
 # Vollstaendiges Backup (DB + API)
-docker exec ${STACK_NAME}_BACKUP python main.py --now
+docker exec ${STACK_NAME}_BACKUP backuphelper --now
 
 # Nur Datenbank-Dump
-docker exec ${STACK_NAME}_BACKUP python main.py --now --db-only
+docker exec ${STACK_NAME}_BACKUP backuphelper --now  # scope via NOCODB_BACKUP_API_EXPORT/INCLUDE_FILES=false
 ```
 
 #### Backups auflisten
 
 ```bash
-docker exec ${STACK_NAME}_BACKUP python cli.py list
+docker exec ${STACK_NAME}_BACKUP backuphelper list
 ```
 
 **Ausgabe:**
@@ -243,32 +249,36 @@ docker exec ${STACK_NAME}_BACKUP python cli.py list
 #### Backup-Details anzeigen
 
 ```bash
-docker exec ${STACK_NAME}_BACKUP python cli.py show 2024-02-05_05-15-00
+docker exec ${STACK_NAME}_BACKUP backuphelper show 2024-02-05_05-15-00
 ```
 
-#### Backup loeschen
+#### Backups aufraeumen (Retention / prune)
+
+Die Engine wendet die Retention (`NOCODB_BACKUP_RETENTION_COUNT`) nach jedem Lauf
+automatisch an, lokal **und** im S3-Ziel. Manuell:
 
 ```bash
-# Lokal und S3
-docker exec ${STACK_NAME}_BACKUP python cli.py delete 2024-02-05_05-15-00
+# Retention sofort anwenden (behaelt N neueste)
+docker exec ${STACK_NAME}_BACKUP backuphelper prune --keep 10
 
-# Nur lokal
-docker exec ${STACK_NAME}_BACKUP python cli.py delete 2024-02-05_05-15-00 --local-only
-
-# Ohne Bestaetigung
-docker exec ${STACK_NAME}_BACKUP python cli.py delete 2024-02-05_05-15-00 --force
+# Nur anzeigen, was entfernt wuerde
+docker exec ${STACK_NAME}_BACKUP backuphelper prune --keep 10 --dry-run
 ```
+
+Einen einzelnen Snapshot gezielt entfernen (kein delete-by-id in der Engine):
+`<id>.tar.gz` + `<id>.manifest.json` aus dem `/data`-Volume bzw. dem S3-Prefix
+loeschen.
 
 #### Backup von S3 herunterladen
 
 ```bash
-docker exec ${STACK_NAME}_BACKUP python cli.py download 2024-02-05_05-15-00
+docker exec ${STACK_NAME}_BACKUP backuphelper download 2024-02-05_05-15-00 /data/export  # exports archive+manifest; restore/verify auto-hydrate from S3
 ```
 
 #### Backup inspizieren
 
 ```bash
-docker exec ${STACK_NAME}_BACKUP python cli.py inspect 2024-02-05_05-15-00
+docker exec ${STACK_NAME}_BACKUP backuphelper show 2024-02-05_05-15-00
 ```
 
 **Ausgabe:**
@@ -288,7 +298,7 @@ docker exec ${STACK_NAME}_BACKUP python cli.py inspect 2024-02-05_05-15-00
 #### Datenbank wiederherstellen
 
 ```bash
-docker exec ${STACK_NAME}_BACKUP python cli.py restore-dump 2024-02-05_05-15-00
+docker exec ${STACK_NAME}_BACKUP backuphelper restore 2024-02-05_05-15-00 --only database
 ```
 
 **WARNUNG:** Dies ueberschreibt die gesamte Datenbank!
@@ -296,7 +306,7 @@ docker exec ${STACK_NAME}_BACKUP python cli.py restore-dump 2024-02-05_05-15-00
 #### Daten-Dateien wiederherstellen (nach restore-dump)
 
 ```bash
-docker exec ${STACK_NAME}_BACKUP python cli.py restore-files 2024-02-05_05-15-00
+docker exec ${STACK_NAME}_BACKUP backuphelper restore 2024-02-05_05-15-00 --only nocodb-data
 ```
 
 Stellt die NocoDB-Dateien (Uploads, Attachments) aus dem `nocodb-data.tar.gz` Archiv
@@ -313,16 +323,16 @@ Original-Pfaden, passend zu den Referenzen in der wiederhergestellten Datenbank.
 
 ```bash
 # Alle Bases und Tabellen aus Backup erstellen
-docker exec ${STACK_NAME}_BACKUP python cli.py restore-schema 2024-02-05_05-15-00
+docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-schema 2024-02-05_05-15-00
 
 # Nur eine bestimmte Base wiederherstellen
-docker exec ${STACK_NAME}_BACKUP python cli.py restore-schema 2024-02-05_05-15-00 --base "Meine_Base"
+docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-schema 2024-02-05_05-15-00 --base "Meine_Base"
 
 # Nur eine bestimmte Tabelle wiederherstellen
-docker exec ${STACK_NAME}_BACKUP python cli.py restore-schema 2024-02-05_05-15-00 --base "Meine_Base" --table "Kunden"
+docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-schema 2024-02-05_05-15-00 --base "Meine_Base" --table "Kunden"
 
 # Bereits existierende Tabellen ueberspringen
-docker exec ${STACK_NAME}_BACKUP python cli.py restore-schema 2024-02-05_05-15-00 --skip-existing
+docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-schema 2024-02-05_05-15-00 --skip-existing
 ```
 
 **Hinweise:**
@@ -338,20 +348,20 @@ docker exec ${STACK_NAME}_BACKUP python cli.py restore-schema 2024-02-05_05-15-0
 
 ```bash
 # Alle Tabellen aller Bases wiederherstellen
-docker exec ${STACK_NAME}_BACKUP python cli.py restore-records 2024-02-05_05-15-00
+docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-records 2024-02-05_05-15-00
 
 # Nur eine bestimmte Base wiederherstellen
-docker exec ${STACK_NAME}_BACKUP python cli.py restore-records 2024-02-05_05-15-00 --base "Meine_Base"
+docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-records 2024-02-05_05-15-00 --base "Meine_Base"
 
 # Nur eine bestimmte Tabelle wiederherstellen
-docker exec ${STACK_NAME}_BACKUP python cli.py restore-records 2024-02-05_05-15-00 --base "Meine_Base" --table "Kunden"
+docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-records 2024-02-05_05-15-00 --base "Meine_Base" --table "Kunden"
 
 # Records MIT Attachments wiederherstellen
-docker exec ${STACK_NAME}_BACKUP python cli.py restore-records 2024-02-05_05-15-00 \
+docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-records 2024-02-05_05-15-00 \
     --base "Meine_Base" --with-attachments
 
 # Ohne Bestaetigung
-docker exec ${STACK_NAME}_BACKUP python cli.py restore-records 2024-02-05_05-15-00 --base "Meine_Base" --force
+docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-records 2024-02-05_05-15-00 --base "Meine_Base" --force
 ```
 
 **Hinweis:** Tabellen muessen in NocoDB bereits mit kompatiblem Schema existieren.
@@ -361,13 +371,13 @@ Records werden via API eingefuegt - bestehende Daten bleiben erhalten (keine Ded
 
 ```bash
 # Alle Attachments wiederherstellen
-docker exec ${STACK_NAME}_BACKUP python cli.py restore-attachments 2024-02-05_05-15-00
+docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-attachments 2024-02-05_05-15-00
 
 # Nur Attachments einer bestimmten Base
-docker exec ${STACK_NAME}_BACKUP python cli.py restore-attachments 2024-02-05_05-15-00 --base "Meine_Base"
+docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-attachments 2024-02-05_05-15-00 --base "Meine_Base"
 
 # Nur Attachments einer bestimmten Tabelle
-docker exec ${STACK_NAME}_BACKUP python cli.py restore-attachments 2024-02-05_05-15-00 \
+docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-attachments 2024-02-05_05-15-00 \
     --base "Meine_Base" --table "Kunden"
 ```
 
@@ -390,13 +400,13 @@ docker compose -f docker-compose.traefik.yml up -d nocodb-init
 docker compose -f docker-compose.traefik.yml --profile backup up -d nocodb-backup
 
 # 3. Backup herunterladen (falls nur auf S3)
-docker exec ${STACK_NAME}_BACKUP python cli.py download 2024-02-05_05-15-00
+docker exec ${STACK_NAME}_BACKUP backuphelper download 2024-02-05_05-15-00 /data/export  # exports archive+manifest; restore/verify auto-hydrate from S3
 
 # 4. Datenbank wiederherstellen
-docker exec ${STACK_NAME}_BACKUP python cli.py restore-dump 2024-02-05_05-15-00
+docker exec ${STACK_NAME}_BACKUP backuphelper restore 2024-02-05_05-15-00 --only database
 
 # 5. Daten-Dateien wiederherstellen (Uploads/Attachments)
-docker exec ${STACK_NAME}_BACKUP python cli.py restore-files 2024-02-05_05-15-00
+docker exec ${STACK_NAME}_BACKUP backuphelper restore 2024-02-05_05-15-00 --only nocodb-data
 
 # 6. NocoDB starten
 docker compose -f docker-compose.traefik.yml up -d nocodb-server
@@ -433,13 +443,13 @@ docker compose -f docker-compose.traefik.yml up -d
 docker compose -f docker-compose.traefik.yml --profile backup up -d nocodb-backup
 
 # 5. Backup herunterladen (falls nur auf S3)
-docker exec ${STACK_NAME}_BACKUP python cli.py download 2024-02-05_05-15-00
+docker exec ${STACK_NAME}_BACKUP backuphelper download 2024-02-05_05-15-00 /data/export  # exports archive+manifest; restore/verify auto-hydrate from S3
 
 # 6. Tabellen-Schema wiederherstellen (erstellt Bases + Tabellen)
-docker exec ${STACK_NAME}_BACKUP python cli.py restore-schema 2024-02-05_05-15-00
+docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-schema 2024-02-05_05-15-00
 
 # 7. Records importieren (optional)
-docker exec ${STACK_NAME}_BACKUP python cli.py restore-records 2024-02-05_05-15-00 --with-attachments
+docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-records 2024-02-05_05-15-00 --with-attachments
 
 # 8. Virtuelle Spalten manuell nachbauen (Links, Lookups, Rollups, Formulas)
 ```
@@ -457,17 +467,17 @@ Wenn nur bestimmte Daten verloren gegangen sind (z.B. versehentlich geloeschte R
 
 ```bash
 # 1. Backup inspizieren um Inhalt zu pruefen
-docker exec ${STACK_NAME}_BACKUP python cli.py inspect 2024-02-05_05-15-00
+docker exec ${STACK_NAME}_BACKUP backuphelper show 2024-02-05_05-15-00
 
 # 2. Backup ggf. von S3 herunterladen
-docker exec ${STACK_NAME}_BACKUP python cli.py download 2024-02-05_05-15-00
+docker exec ${STACK_NAME}_BACKUP backuphelper download 2024-02-05_05-15-00 /data/export  # exports archive+manifest; restore/verify auto-hydrate from S3
 
 # 3a. Bestimmte Tabelle MIT Attachments wiederherstellen
-docker exec ${STACK_NAME}_BACKUP python cli.py restore-records 2024-02-05_05-15-00 \
+docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-records 2024-02-05_05-15-00 \
     --base "Meine_Base" --table "Kunden" --with-attachments
 
 # 3b. Oder gesamte Base ohne Attachments (schneller)
-docker exec ${STACK_NAME}_BACKUP python cli.py restore-records 2024-02-05_05-15-00 \
+docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-records 2024-02-05_05-15-00 \
     --base "Meine_Base"
 ```
 
@@ -491,7 +501,7 @@ gunzip -k /path/to/backup/database.sql.gz
 cat /path/to/backup/database.sql | docker exec -i ${STACK_NAME}_DATABASE psql -U nocodb -d nocodb
 
 # Danach Attachments wiederherstellen (falls im Backup enthalten)
-docker exec ${STACK_NAME}_BACKUP python cli.py restore-attachments 2024-02-05_05-15-00
+docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-attachments 2024-02-05_05-15-00
 ```
 
 ### Development mit MinIO
@@ -834,16 +844,16 @@ The backup container provides a CLI for manual operations:
 
 ```bash
 # Full backup (DB + API)
-docker exec ${STACK_NAME}_BACKUP python main.py --now
+docker exec ${STACK_NAME}_BACKUP backuphelper --now
 
 # Database dump only
-docker exec ${STACK_NAME}_BACKUP python main.py --now --db-only
+docker exec ${STACK_NAME}_BACKUP backuphelper --now  # scope via NOCODB_BACKUP_API_EXPORT/INCLUDE_FILES=false
 ```
 
 #### List Backups
 
 ```bash
-docker exec ${STACK_NAME}_BACKUP python cli.py list
+docker exec ${STACK_NAME}_BACKUP backuphelper list
 ```
 
 **Output:**
@@ -861,32 +871,35 @@ docker exec ${STACK_NAME}_BACKUP python cli.py list
 #### Show Backup Details
 
 ```bash
-docker exec ${STACK_NAME}_BACKUP python cli.py show 2024-02-05_05-15-00
+docker exec ${STACK_NAME}_BACKUP backuphelper show 2024-02-05_05-15-00
 ```
 
-#### Delete Backup
+#### Prune Backups (retention)
+
+Retention (`NOCODB_BACKUP_RETENTION_COUNT`) is applied automatically after each
+run, both locally and in the S3 target. Manually:
 
 ```bash
-# Local and S3
-docker exec ${STACK_NAME}_BACKUP python cli.py delete 2024-02-05_05-15-00
+# Apply retention now (keep the N newest)
+docker exec ${STACK_NAME}_BACKUP backuphelper prune --keep 10
 
-# Local only
-docker exec ${STACK_NAME}_BACKUP python cli.py delete 2024-02-05_05-15-00 --local-only
-
-# Without confirmation
-docker exec ${STACK_NAME}_BACKUP python cli.py delete 2024-02-05_05-15-00 --force
+# Preview only
+docker exec ${STACK_NAME}_BACKUP backuphelper prune --keep 10 --dry-run
 ```
+
+There is no delete-by-id; to remove a single snapshot, delete its `<id>.tar.gz`
+and `<id>.manifest.json` from the `/data` volume (and the S3 prefix).
 
 #### Download Backup from S3
 
 ```bash
-docker exec ${STACK_NAME}_BACKUP python cli.py download 2024-02-05_05-15-00
+docker exec ${STACK_NAME}_BACKUP backuphelper download 2024-02-05_05-15-00 /data/export  # exports archive+manifest; restore/verify auto-hydrate from S3
 ```
 
 #### Inspect Backup
 
 ```bash
-docker exec ${STACK_NAME}_BACKUP python cli.py inspect 2024-02-05_05-15-00
+docker exec ${STACK_NAME}_BACKUP backuphelper show 2024-02-05_05-15-00
 ```
 
 **Output:**
@@ -906,7 +919,7 @@ docker exec ${STACK_NAME}_BACKUP python cli.py inspect 2024-02-05_05-15-00
 #### Restore Database
 
 ```bash
-docker exec ${STACK_NAME}_BACKUP python cli.py restore-dump 2024-02-05_05-15-00
+docker exec ${STACK_NAME}_BACKUP backuphelper restore 2024-02-05_05-15-00 --only database
 ```
 
 **WARNING:** This overwrites the entire database!
@@ -914,7 +927,7 @@ docker exec ${STACK_NAME}_BACKUP python cli.py restore-dump 2024-02-05_05-15-00
 #### Restore Data Files (after restore-dump)
 
 ```bash
-docker exec ${STACK_NAME}_BACKUP python cli.py restore-files 2024-02-05_05-15-00
+docker exec ${STACK_NAME}_BACKUP backuphelper restore 2024-02-05_05-15-00 --only nocodb-data
 ```
 
 Restores NocoDB files (uploads, attachments) from the `nocodb-data.tar.gz` archive
@@ -931,16 +944,16 @@ matching the references in the restored database.
 
 ```bash
 # Create all bases and tables from backup
-docker exec ${STACK_NAME}_BACKUP python cli.py restore-schema 2024-02-05_05-15-00
+docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-schema 2024-02-05_05-15-00
 
 # Restore only a specific base
-docker exec ${STACK_NAME}_BACKUP python cli.py restore-schema 2024-02-05_05-15-00 --base "My_Base"
+docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-schema 2024-02-05_05-15-00 --base "My_Base"
 
 # Restore only a specific table
-docker exec ${STACK_NAME}_BACKUP python cli.py restore-schema 2024-02-05_05-15-00 --base "My_Base" --table "Customers"
+docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-schema 2024-02-05_05-15-00 --base "My_Base" --table "Customers"
 
 # Skip already existing tables
-docker exec ${STACK_NAME}_BACKUP python cli.py restore-schema 2024-02-05_05-15-00 --skip-existing
+docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-schema 2024-02-05_05-15-00 --skip-existing
 ```
 
 **Notes:**
@@ -956,20 +969,20 @@ docker exec ${STACK_NAME}_BACKUP python cli.py restore-schema 2024-02-05_05-15-0
 
 ```bash
 # Restore all tables of all bases
-docker exec ${STACK_NAME}_BACKUP python cli.py restore-records 2024-02-05_05-15-00
+docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-records 2024-02-05_05-15-00
 
 # Restore only a specific base
-docker exec ${STACK_NAME}_BACKUP python cli.py restore-records 2024-02-05_05-15-00 --base "My_Base"
+docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-records 2024-02-05_05-15-00 --base "My_Base"
 
 # Restore only a specific table
-docker exec ${STACK_NAME}_BACKUP python cli.py restore-records 2024-02-05_05-15-00 --base "My_Base" --table "Customers"
+docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-records 2024-02-05_05-15-00 --base "My_Base" --table "Customers"
 
 # Restore records WITH attachments
-docker exec ${STACK_NAME}_BACKUP python cli.py restore-records 2024-02-05_05-15-00 \
+docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-records 2024-02-05_05-15-00 \
     --base "My_Base" --with-attachments
 
 # Without confirmation
-docker exec ${STACK_NAME}_BACKUP python cli.py restore-records 2024-02-05_05-15-00 --base "My_Base" --force
+docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-records 2024-02-05_05-15-00 --base "My_Base" --force
 ```
 
 **Note:** Tables must already exist in NocoDB with a compatible schema.
@@ -979,13 +992,13 @@ Records are inserted via API - existing data is preserved (no deduplication).
 
 ```bash
 # Restore all attachments
-docker exec ${STACK_NAME}_BACKUP python cli.py restore-attachments 2024-02-05_05-15-00
+docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-attachments 2024-02-05_05-15-00
 
 # Only attachments of a specific base
-docker exec ${STACK_NAME}_BACKUP python cli.py restore-attachments 2024-02-05_05-15-00 --base "My_Base"
+docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-attachments 2024-02-05_05-15-00 --base "My_Base"
 
 # Only attachments of a specific table
-docker exec ${STACK_NAME}_BACKUP python cli.py restore-attachments 2024-02-05_05-15-00 \
+docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-attachments 2024-02-05_05-15-00 \
     --base "My_Base" --table "Customers"
 ```
 
@@ -1008,13 +1021,13 @@ docker compose -f docker-compose.traefik.yml up -d nocodb-init
 docker compose -f docker-compose.traefik.yml --profile backup up -d nocodb-backup
 
 # 3. Download backup (if only on S3)
-docker exec ${STACK_NAME}_BACKUP python cli.py download 2024-02-05_05-15-00
+docker exec ${STACK_NAME}_BACKUP backuphelper download 2024-02-05_05-15-00 /data/export  # exports archive+manifest; restore/verify auto-hydrate from S3
 
 # 4. Restore database
-docker exec ${STACK_NAME}_BACKUP python cli.py restore-dump 2024-02-05_05-15-00
+docker exec ${STACK_NAME}_BACKUP backuphelper restore 2024-02-05_05-15-00 --only database
 
 # 5. Restore data files (uploads/attachments)
-docker exec ${STACK_NAME}_BACKUP python cli.py restore-files 2024-02-05_05-15-00
+docker exec ${STACK_NAME}_BACKUP backuphelper restore 2024-02-05_05-15-00 --only nocodb-data
 
 # 6. Start NocoDB
 docker compose -f docker-compose.traefik.yml up -d nocodb-server
@@ -1051,13 +1064,13 @@ docker compose -f docker-compose.traefik.yml up -d
 docker compose -f docker-compose.traefik.yml --profile backup up -d nocodb-backup
 
 # 5. Download backup (if only on S3)
-docker exec ${STACK_NAME}_BACKUP python cli.py download 2024-02-05_05-15-00
+docker exec ${STACK_NAME}_BACKUP backuphelper download 2024-02-05_05-15-00 /data/export  # exports archive+manifest; restore/verify auto-hydrate from S3
 
 # 6. Restore table schema (creates bases + tables)
-docker exec ${STACK_NAME}_BACKUP python cli.py restore-schema 2024-02-05_05-15-00
+docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-schema 2024-02-05_05-15-00
 
 # 7. Import records (optional)
-docker exec ${STACK_NAME}_BACKUP python cli.py restore-records 2024-02-05_05-15-00 --with-attachments
+docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-records 2024-02-05_05-15-00 --with-attachments
 
 # 8. Manually recreate virtual columns (Links, Lookups, Rollups, Formulas)
 ```
@@ -1075,17 +1088,17 @@ When only specific data has been lost (e.g. accidentally deleted records):
 
 ```bash
 # 1. Inspect backup to check contents
-docker exec ${STACK_NAME}_BACKUP python cli.py inspect 2024-02-05_05-15-00
+docker exec ${STACK_NAME}_BACKUP backuphelper show 2024-02-05_05-15-00
 
 # 2. Download backup from S3 if needed
-docker exec ${STACK_NAME}_BACKUP python cli.py download 2024-02-05_05-15-00
+docker exec ${STACK_NAME}_BACKUP backuphelper download 2024-02-05_05-15-00 /data/export  # exports archive+manifest; restore/verify auto-hydrate from S3
 
 # 3a. Restore specific table WITH attachments
-docker exec ${STACK_NAME}_BACKUP python cli.py restore-records 2024-02-05_05-15-00 \
+docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-records 2024-02-05_05-15-00 \
     --base "My_Base" --table "Customers" --with-attachments
 
 # 3b. Or restore entire base without attachments (faster)
-docker exec ${STACK_NAME}_BACKUP python cli.py restore-records 2024-02-05_05-15-00 \
+docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-records 2024-02-05_05-15-00 \
     --base "My_Base"
 ```
 
@@ -1109,7 +1122,7 @@ gunzip -k /path/to/backup/database.sql.gz
 cat /path/to/backup/database.sql | docker exec -i ${STACK_NAME}_DATABASE psql -U nocodb -d nocodb
 
 # Then restore attachments (if included in backup)
-docker exec ${STACK_NAME}_BACKUP python cli.py restore-attachments 2024-02-05_05-15-00
+docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-attachments 2024-02-05_05-15-00
 ```
 
 ### Development with MinIO

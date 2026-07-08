@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "backuphelper-nocodb"
+version = "0.1.0"
+description = "NocoDB REST-API export source + restore commands for the BAUER GROUP BackupHelper engine"
+readme = "README.md"
+requires-python = ">=3.14"
+license = "MIT"
+authors = [{ name = "BAUER GROUP" }]
+dependencies = [
+  "httpx>=0.27",
+]
+
+[project.urls]
+Homepage = "https://github.com/bauer-group/CS-NocoDB"
+
+# The engine discovers this class for spec entries of type "nocodb-rest".
+[project.entry-points."backuphelper.sources"]
+nocodb-rest = "nocodb_backup_ext.rest_source:NocoDBRestSource"
+
+# The engine mounts this typer.Typer group under its CLI as `backuphelper nocodb …`.
+[project.entry-points."backuphelper.commands"]
+nocodb = "nocodb_backup_ext.commands:app"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["nocodb_backup_ext*"]
