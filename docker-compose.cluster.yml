@@ -1,0 +1,880 @@
+# =============================================================================
+# NocoDB - Cluster (HAProxy + 4/6/8 Instanzen + Redis) mit Traefik
+# =============================================================================
+# Usage: docker compose -f docker-compose.cluster.yml up -d
+#
+# Requirements:
+#   - External Traefik network (${PROXY_NETWORK})
+#   - DNS resolution for ${SERVICE_HOSTNAME}
+#   - Traefik with Let's Encrypt certresolver "letsencrypt"
+#   - Traefik entrypoints: web (80), web-secure (443)
+#   - Host-Ressourcen passend zur Skalierungsstufe (COMPOSE_PROFILES):
+#       (leer)  ->  4 Instanzen, Budget 16 GB / 16 Cores
+#       scale6  ->  6 Instanzen, Budget 24 GB / 20 Cores
+#       scale8  ->  8 Instanzen, Budget 32 GB / 24 Cores
+#     Die passenden Limits je Stufe stehen als kopierbare Bloecke in
+#     .env.example. Alle Container haben Limits - nicht nur NocoDB.
+#
+# Access:
+#   - Application: https://${SERVICE_HOSTNAME}
+#   - HTTP requests are redirected to HTTPS
+#
+# -----------------------------------------------------------------------------
+# WARUM DIESER STACK
+# -----------------------------------------------------------------------------
+# NocoDB ist ein einzelner Node-Prozess und damit single-threaded: eine Instanz
+# nutzt genau einen CPU-Core, egal wie viele der Host hat. Mehr Durchsatz gibt
+# es ausschliesslich ueber mehr Instanzen.
+#
+# Unterschiede zum Single-Instance-Stack (docker-compose.traefik.yml):
+#   - HAProxy als Load Balancer IM Stack. Damit ist der Stack unabhaengig vom
+#     Edge-Proxy (funktioniert genauso hinter nginx, Caddy, cloudflared oder an
+#     einem direkt gebundenen Port) und bringt eine Concurrency-Bremse mit.
+#   - Redis als gemeinsamer Cache-, Job- und socket.io-Backplane. ZWINGEND:
+#     ohne Redis sehen die Instanzen die Schemaaenderungen der jeweils anderen
+#     nicht und Live-Updates erreichen nur die eigene Instanz.
+#   - nocodb-server-1 ist Migrations-Leader, alle anderen warten auf dessen
+#     Health. Siehe Kommentar am Service.
+#
+# -----------------------------------------------------------------------------
+# DIMENSIONIERUNG
+# -----------------------------------------------------------------------------
+#   8 Instanzen x NC_DB_POOL_MAX (10) = 80 gleichzeitige DB-gebundene Requests.
+#
+# Warum nicht mehr: PostgreSQL degradiert jenseits von etwa 2-4x CPU-Cores an
+# AKTIVEN Verbindungen - Lock-Contention und Context-Switching fressen den
+# Gewinn auf. Bei 24 Cores liegt das Optimum bei 50-100. Ein groesserer Pool
+# je Instanz macht die Datenbank langsamer, nicht schneller. Ueberlast gehoert
+# vor die Datenbank in eine sichtbare Queue (HAProxy), nicht hinein.
+#
+#   max_connections 200 =  80 (Instanzen)
+#                       +  80 (Per-Source-Pools, gleichzeitig aktiv)
+#                       +   4 (nocodb-init)
+#                       +   4 (nocodb-backup)
+#                       +   6 (Admin/psql/Monitoring)
+#                       +   3 (superuser_reserved_connections)
+#                       +  23 (Marge)
+#
+# NocoDB oeffnet je Datenquelle einen eigenen Knex-Pool. Da pool.min = 0 ist,
+# schrumpfen die Pools ungenutzter Quellen aber auf null - der Faktor gilt nur
+# fuer GLEICHZEITIG AKTIVE Quellen. Reale Zahl gegenpruefen mit:
+#   SELECT state, count(*) FROM pg_stat_activity WHERE datname='nocodb'
+#   GROUP BY 1;
+# Bei mehr als zwei gleichzeitig aktiven Quellen nicht max_connections weiter
+# hochdrehen (jenseits ~300 wird PostgreSQL messbar langsamer), sondern
+# PgBouncer im Transaction-Mode davorsetzen.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Gemeinsame Definition aller NocoDB-Instanzen
+# -----------------------------------------------------------------------------
+# Das depends_on hier gilt fuer die Instanzen 2-8: sie warten auf die Health
+# von nocodb-server-1. nocodb-server-1 ueberschreibt den Eintrag.
+x-nocodb: &nocodb
+  image: ${NOCODB_IMAGE:-ghcr.io/bauer-group/cs-nocodb/nocodb}:${NOCODB_VERSION:-latest}
+  restart: unless-stopped
+  healthcheck:
+    # /api/v1/health ist PFLICHT - NICHT "/".
+    # NocoDB bindet den Port BEVOR die Migrationen laufen (run/timely.ts:
+    # server.listen(...) und erst im Callback Noco.init()). "/" liefert deshalb
+    # sofort 200 aus den statischen Assets und waere falsch-positiv; die Route
+    # /api/v1/health existiert erst nach vollstaendigem Init inklusive
+    # Migrationen und NcUpgrader. Nur so traegt das depends_on-Gate unten.
+    test: ["CMD", "curl", "-sf", "http://localhost:8080/api/v1/health"]
+    interval: 10s
+    timeout: 5s
+    retries: 30
+    # start_period x retries muss die laengste Migration ueberdauern. Wird der
+    # Wert zu knapp gewaehlt, erreicht nocodb-server-1 nie "healthy" und der
+    # gesamte Stack bleibt stehen (sichtbar, aber aergerlich).
+    start_period: 120s
+  logging:
+    driver: json-file
+    options:
+      max-size: "50m"
+      max-file: "3"
+  deploy:
+    resources:
+      limits:
+        # Ceilings, keine Reservierungen. 8 x 2.0 = 16 darf die 24 Cores
+        # ueberschreiten: ein Node-Prozess zieht einzeln nie dauerhaft 2 Cores
+        # (single-threaded JS + libuv-Threadpool + GC).
+        cpus: "${NOCODB_CPU_LIMIT:-2.0}"
+        memory: ${NOCODB_MEMORY_LIMIT:-3G}
+  environment:
+    - TZ=${TIME_ZONE:-Etc/UTC}
+    - NC_DB=pg://database-server:5432?u=nocodb&p=${DATABASE_PASSWORD}&d=nocodb
+    - NC_APP_DATA_DIR=/usr/app/data
+
+    # NC_SITE_URL bestimmt auch den socket.io-Namespace und MUSS deshalb auf
+    # allen Instanzen identisch sein - sonst verbinden sich Clients gegen
+    # unterschiedliche Namespaces.
+    - NC_SITE_URL=${NC_SITE_URL:-https://${SERVICE_HOSTNAME}}
+
+    # Redis: Cache + Bull-Job-Queue + PubSub + socket.io-Adapter.
+    # Eine URL deckt alle drei Verwendungen ab (redisHelpers.ts faellt jeweils
+    # auf NC_REDIS_URL zurueck). ZWINGEND fuer den Mehr-Instanz-Betrieb.
+    - NC_REDIS_URL=redis://redis-server:6379
+
+    # Telemetry & Error-Reporting (zwei getrennte Schalter!)
+    # NC_DISABLE_ERR_REPORTS mit Plural-S - die Singular-Form existiert nicht.
+    - NC_DISABLE_TELE=true
+    - NC_DISABLE_ERR_REPORTS=true
+    - NC_DISABLE_SUPPORT_CHAT=true
+    - NC_DISABLE_AUDIT=true
+
+    # Auth - beide Werte MUESSEN auf allen Instanzen identisch sein, sonst
+    # akzeptiert Instanz B die von Instanz A ausgestellten Tokens nicht.
+    # HINWEIS: "Invite Only Signup" ist KEINE Env-Variable. Der reale Schalter
+    # ist das invite_only_signup-Flag in nc_store (Default: false = offene
+    # Registrierung), nur ueber die Super-Admin-UI setzbar.
+    - NC_AUTH_JWT_SECRET=${NC_AUTH_JWT_SECRET}
+    - NC_JWT_EXPIRES_IN=${NC_JWT_EXPIRES_IN:-12h}
+
+    # Verschluesselung der Credentials externer Datenquellen (sources-Tabelle).
+    # BEWUSST NICHT GESETZT - Opt-in, siehe .env.example.
+    #
+    # Ohne Key bleiben die Credentials im Klartext in der Datenbank (und damit
+    # in jedem pg_dump). Das ist der Zustand seit jeher und eine bewusste
+    # Abwaegung: das Aktivieren ist IRREVERSIBEL und loest beim Start eine
+    # Re-Encrypt-Migration aus, die bei mehreren gleichzeitig startenden
+    # Instanzen die Credentials durch Doppelverschluesselung zerstoert.
+    #
+    # Ein leerer Wert ist sicher: initDataSourceEncryption.ts prueft
+    #   if (!process.env.NC_CONNECTION_ENCRYPT_KEY) return;
+    # - leerer String ist falsy, die Migration wird also uebersprungen.
+    #
+    # Aktivieren nur bewusst und nach der Anleitung in .env.example.
+    - NC_CONNECTION_ENCRYPT_KEY=${NC_CONNECTION_ENCRYPT_KEY:-}
+
+    # Knex/tarn Connection Pool - PRO INSTANZ.
+    # Dieser Wert wird auch an den HAProxy durchgereicht und dort als "maxconn"
+    # je Backend-Server verwendet. Beide koennen damit nicht auseinanderlaufen.
+    # Aendern heisst: max_connections unten gegenrechnen (siehe Kopf).
+    - NC_DB_POOL_MAX=${NC_DB_POOL_MAX_CLUSTER:-10}
+
+    # Thread-Begrenzung fuer die Bildverarbeitung (Thumbnails, sharp/libvips).
+    # WICHTIG: libvips startet per Default so viele Worker-Threads, wie CPU-Cores
+    # SICHTBAR sind - unabhaengig vom cgroup-CPU-Limit. Auf einem 24-Core-Host
+    # waeren das 24 Threads JE INSTANZ, bei 8 Instanzen also bis zu 192 Threads
+    # fuer 24 Cores. Das cpus-Limit drosselt die zwar per CFS-Quota, verhindert
+    # die Thread-Explosion aber nicht - es tauscht Ueberlast gegen
+    # Context-Switching.
+    # Deshalb hier passend zum cpus-Limit setzen (Default 2 zu cpus 2.0).
+    - VIPS_CONCURRENCY=${VIPS_CONCURRENCY:-2}
+
+    # Query & Bulk Operation Limits
+    - DB_QUERY_LIMIT_DEFAULT=${DB_QUERY_LIMIT_DEFAULT:-25}
+    - DB_QUERY_LIMIT_MAX=${DB_QUERY_LIMIT_MAX:-1000}
+    - DB_QUERY_LIMIT_MIN=${DB_QUERY_LIMIT_MIN:-1}
+    - DB_QUERY_LIMIT_GROUP_BY_GROUP=${DB_QUERY_LIMIT_GROUP_BY_GROUP:-10}
+    - DB_QUERY_LIMIT_GROUP_BY_RECORD=${DB_QUERY_LIMIT_GROUP_BY_RECORD:-10}
+    - NC_DATA_PAYLOAD_LIMIT=${NC_DATA_PAYLOAD_LIMIT:-100000}
+    - NC_REQUEST_BODY_SIZE=${NC_REQUEST_BODY_SIZE:-268435456}
+
+    # Rate Limiting: bewusst KEINES. Begruendung im configs-Block am Ende
+    # dieser Datei (ein Per-IP-Limit trifft bei Automatisierungen wie n8n
+    # immer den eigenen Traffic, nie einen Angreifer).
+    # NocoDB OSS hat keine funktionierende Rate-Limit-Implementierung - alle
+    # drei Limiter-Guards sind Pass-Through und verweisen im Quelltext
+    # ausdruecklich auf den Load Balancer.
+
+    # SMTP Configuration
+    # ACHTUNG Semantik: NC_SMTP_IGNORE_TLS steuert STARTTLS, NICHT die
+    # Zertifikatspruefung. Der Schalter dafuer ist NC_SMTP_REJECT_UNAUTHORIZED
+    # und steht bei NocoDB per Default auf false (= keine Pruefung).
+    - NC_SMTP_HOST=${SMTP_HOST}
+    - NC_SMTP_PORT=${SMTP_PORT}
+    - NC_SMTP_USERNAME=${SMTP_USER}
+    - NC_SMTP_PASSWORD=${SMTP_PASSWORD}
+    - NC_SMTP_SECURE=${SMTP_TLS}
+    - NC_SMTP_IGNORE_TLS=${SMTP_IGNORE_TLS:-false}
+    - NC_SMTP_REJECT_UNAUTHORIZED=${SMTP_CERTCHECK:-true}
+    - NC_SMTP_FROM=${SMTP_FROM_NAME} <${SMTP_FROM}>
+
+    # Attachment Settings
+    - NC_ATTACHMENT_FIELD_SIZE=${NC_ATTACHMENT_FIELD_SIZE:-268435456}
+    - NC_NON_ATTACHMENT_FIELD_SIZE=${NC_NON_ATTACHMENT_FIELD_SIZE:-268435456}
+    - NC_MAX_ATTACHMENTS_ALLOWED=${NC_MAX_ATTACHMENTS_ALLOWED:-50}
+    - NC_SECURE_ATTACHMENTS=${NC_SECURE_ATTACHMENTS:-false}
+    - NC_ATTACHMENT_EXPIRE_SECONDS=${NC_ATTACHMENT_EXPIRE_SECONDS:-7200}
+
+    # S3 Storage (optional - for attachments)
+    # DRINGEND EMPFOHLEN im Cluster: ohne S3 mounten alle acht Instanzen
+    # dasselbe lokale Volume beschreibbar. Auf einem Host ist das kohaerent,
+    # upstream bedeutet Mehr-Instanz-Betrieb aber Object Storage.
+    - NC_S3_BUCKET_NAME=${NC_S3_BUCKET_NAME:-}
+    - NC_S3_REGION=${NC_S3_REGION:-}
+    - NC_S3_ENDPOINT=${NC_S3_ENDPOINT:-}
+    - NC_S3_ACCESS_KEY=${NC_S3_ACCESS_KEY:-}
+    - NC_S3_ACCESS_SECRET=${NC_S3_ACCESS_SECRET:-}
+    - NC_S3_FORCE_PATH_STYLE=${NC_S3_FORCE_PATH_STYLE:-true}
+    - NC_S3_ACL=${NC_S3_ACL:-private}
+  volumes:
+    - nocodb-data:/usr/app/data
+  # KEINE traefik.*-Labels und KEIN proxy-Netz an den Instanzen. Traefik wuerde
+  # sie sonst direkt als Backends erkennen, den HAProxy umgehen und damit die
+  # Sticky Sessions still aushebeln. Nur der loadbalancer traegt Labels.
+  networks:
+    local:
+  depends_on:
+    nocodb-server-1:
+      condition: service_healthy
+
+services:
+
+  ### NocoDB Instanz 1 - Migrations-Leader ###
+  # -----------------------------------------------------------------------------
+  # Alle anderen Instanzen warten ueber depends_on auf die Health dieses
+  # Containers. Das ist KEINE Runbook-Konvention, sondern von Docker bei jedem
+  # up, Neustart und Image-Update erzwungen.
+  #
+  # Warum ueberhaupt noetig - paralleler Boot ist nachweislich unsicher:
+  #   - Der Knex-Migrations-Lock selbst funktioniert (Transaktion + Row-Lock).
+  #   - ABER NcUpgrader (version-upgrader/NcUpgrader.ts) ist voellig ungesichert;
+  #     der Quelltext traegt dort woertlich "// Todo: transaction". Ohne
+  #     FOR UPDATE lesen unter READ COMMITTED alle Instanzen dieselbe alte
+  #     Version und fuehren SAEMTLICHE Data-Upgrader parallel aus. Das greift
+  #     genau beim Versions-Upgrade.
+  #   - Auf frischer Datenbank laeuft Knex' ensureTable() ausserhalb der
+  #     Transaktion (check-then-act ohne IF NOT EXISTS). Mehrere Prozesse
+  #     koennen mehrere Lock-Zeilen einfuegen -> rowCount != 1 -> dauerhaft
+  #     "Migration table is already locked". Das heilt nicht von selbst.
+  # -----------------------------------------------------------------------------
+  nocodb-server-1:
+    <<: *nocodb
+    container_name: ${STACK_NAME}_SERVER_1
+    # Ueberschreibt das depends_on aus dem Anchor (kein Selbstbezug).
+    depends_on:
+      database-server:
+        condition: service_healthy
+      redis-server:
+        condition: service_healthy
+      nocodb-init:
+        condition: service_completed_successfully
+
+  ### NocoDB Instanzen 2-8 ###
+  # Erben depends_on (nocodb-server-1 healthy) aus dem Anchor. Die Abhaengigkeit
+  # auf Datenbank, Redis und Init laeuft transitiv ueber Instanz 1.
+  #
+  # SKALIERUNG ueber Profile - die Instanzzahl bestimmt das Ressourcenbudget:
+  #   (ohne Profil)        ->  4 Instanzen   Basis, passt in ~16 GB / 16 Cores
+  #   --profile scale6     ->  6 Instanzen
+  #   --profile scale8     ->  8 Instanzen   volle Ausbaustufe
+  #
+  # Beispiel:
+  #   docker compose -f docker-compose.cluster.yml --profile scale8 up -d
+  #
+  # Nicht gestartete Instanzen erscheinen in den HAProxy-Stats als DOWN bzw.
+  # MAINT (resolution) - das ist erwartet und dank "init-addr last,none"
+  # unschaedlich. Passende Werte fuer NOCODB_MEMORY_LIMIT, POSTGRES_* und
+  # REDIS_* je Ausbaustufe stehen als Budget-Profile in .env.example.
+  nocodb-server-2:
+    <<: *nocodb
+    container_name: ${STACK_NAME}_SERVER_2
+
+  nocodb-server-3:
+    <<: *nocodb
+    container_name: ${STACK_NAME}_SERVER_3
+
+  nocodb-server-4:
+    <<: *nocodb
+    container_name: ${STACK_NAME}_SERVER_4
+
+  nocodb-server-5:
+    <<: *nocodb
+    container_name: ${STACK_NAME}_SERVER_5
+    profiles: ["scale6", "scale8"]
+
+  nocodb-server-6:
+    <<: *nocodb
+    container_name: ${STACK_NAME}_SERVER_6
+    profiles: ["scale6", "scale8"]
+
+  nocodb-server-7:
+    <<: *nocodb
+    container_name: ${STACK_NAME}_SERVER_7
+    profiles: ["scale8"]
+
+  nocodb-server-8:
+    <<: *nocodb
+    container_name: ${STACK_NAME}_SERVER_8
+    profiles: ["scale8"]
+
+
+  ### HAProxy Load Balancer ###
+  # -----------------------------------------------------------------------------
+  # Einziger Service mit Traefik-Labels und Anbindung an das proxy-Netz.
+  # Die Konfiguration steht INLINE im configs-Block am Ende dieser Datei -
+  # der Stack ist damit allein aus Compose-Datei plus .env deploybar. Kern:
+  #   - be_nocodb_api: maxconn = NC_DB_POOL_MAX je Server. Request N+1 wird
+  #     GEQUEUET statt abgelehnt; 503 erst nach "timeout queue" (30s), 504 nach
+  #     "timeout server" (60s). Das ersetzt den heutigen 10-Minuten-Hang.
+  #   - be_nocodb_ws:  eigener, grosszuegiger maxconn fuer /socket.io/. Ein
+  #     aufgestiegener WebSocket haelt seinen Slot ueber die gesamte
+  #     Verbindungsdauer - in einem gemeinsamen Backend haetten rund 80 offene
+  #     Browser-Tabs den Cluster belegt, ohne einen einzigen REST-Request.
+  # -----------------------------------------------------------------------------
+  loadbalancer:
+    # 3.4 ist das aktuelle LTS (Support bis 2031-Q2). Einen Tag "haproxy:3"
+    # gibt es nicht; "haproxy:lts" wandert spaeter auf 3.6/3.8 und ist zum
+    # Pinnen ungeeignet.
+    image: haproxy:${HAPROXY_VERSION:-3.4}-alpine
+    restart: unless-stopped
+    container_name: ${STACK_NAME}_LB
+    healthcheck:
+      # /healthz kommt aus dem fe_monitoring-Frontend und meldet ueber
+      # "monitor fail if nbsrv() lt 1" auch dann einen Fehler, wenn HAProxy
+      # zwar laeuft, aber kein einziges Backend erreichbar ist.
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8405/healthz || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          # HAProxy ist zustandslos und sehr sparsam (gemessen: ~22 MB).
+          cpus: "${HAPROXY_CPU_LIMIT:-2.0}"
+          memory: ${HAPROXY_MEMORY_LIMIT:-512M}
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+    configs:
+      - source: haproxy_cfg
+        target: /usr/local/etc/haproxy/haproxy.cfg
+    expose:
+      - 8080/tcp
+    labels:
+      - "traefik.enable=true"
+
+      # Middleware: HTTP to HTTPS redirect
+      - "traefik.http.middlewares.${STACK_NAME}-redirect-to-secure.redirectscheme.scheme=https"
+      - "traefik.http.middlewares.${STACK_NAME}-redirect-to-secure.redirectscheme.permanent=true"
+
+      # Router: HTTP (redirect to HTTPS)
+      - "traefik.http.routers.${STACK_NAME}-http.rule=Host(`${SERVICE_HOSTNAME}`)"
+      - "traefik.http.routers.${STACK_NAME}-http.entrypoints=web"
+      - "traefik.http.routers.${STACK_NAME}-http.middlewares=${STACK_NAME}-redirect-to-secure"
+
+      # Router: HTTPS
+      - "traefik.http.routers.${STACK_NAME}-https.rule=Host(`${SERVICE_HOSTNAME}`)"
+      - "traefik.http.routers.${STACK_NAME}-https.entrypoints=web-secure"
+      - "traefik.http.routers.${STACK_NAME}-https.tls=true"
+      - "traefik.http.routers.${STACK_NAME}-https.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.${STACK_NAME}-https.service=${STACK_NAME}"
+
+      # Service
+      - "traefik.http.services.${STACK_NAME}.loadBalancer.server.port=8080"
+    depends_on:
+      nocodb-server-1:
+        condition: service_healthy
+    networks:
+      local:
+      proxy:
+        aliases:
+          - "${SERVICE_HOSTNAME}.internal"
+
+
+  ### Redis - Cache, Job-Queue, PubSub, socket.io-Backplane ###
+  # -----------------------------------------------------------------------------
+  # ZWINGEND fuer den Mehr-Instanz-Betrieb. Ohne Redis:
+  #   - Metadaten-Cache: jede Instanz cacht lokal, Schemaaenderungen auf Instanz
+  #     A werden auf Instanz B nicht sichtbar.
+  #   - socket.io: Events bleiben auf der emittierenden Instanz, Live-Updates
+  #     erreichen andere Nutzer nicht.
+  # Beides faellt still aus - der Stack sieht dabei gesund aus.
+  # -----------------------------------------------------------------------------
+  redis-server:
+    image: redis:${REDIS_VERSION:-8}-alpine
+    restart: unless-stopped
+    container_name: ${STACK_NAME}_REDIS
+    # maxmemory-policy: BEWUSST noeviction, abweichend vom sonst ueblichen
+    # volatile-lru. Bull legt Jobs als Hash plus Referenzen in wait/active-Listen
+    # ab. Wird ein Job-Hash evictiert, bleiben tote Referenzen zurueck: Jobs
+    # verschwinden lautlos und die Queue kann blockieren. allkeys-lru waere hier
+    # fatal. noeviction laesst Schreibzugriffe stattdessen laut scheitern.
+    # Der NocoDB-Cache skaliert mit der SCHEMA-Groesse, nicht mit der Zeilenzahl
+    # - 2 GB werden im Normalbetrieb nie erreicht.
+    command: >
+      redis-server
+      --port 6379
+      --loglevel warning
+      --protected-mode no
+      --maxmemory ${REDIS_MEMORYLIMIT:-2gb}
+      --maxmemory-policy ${REDIS_MEMORYPOLICY:-noeviction}
+      --appendonly yes
+      --appendfsync everysec
+      --save 300 100
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          # Muss ueber REDIS_MEMORYLIMIT liegen: maxmemory begrenzt nur die
+          # Nutzdaten, hinzu kommen Fragmentierung, AOF-Puffer und Copy-on-Write
+          # beim Snapshot-Fork. Faustregel: Container-Limit ~1,5x maxmemory.
+          cpus: "${REDIS_CPU_LIMIT:-2.0}"
+          memory: ${REDIS_MEMORY_LIMIT:-3G}
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+    environment:
+      - TZ=${TIME_ZONE:-Etc/UTC}
+    expose:
+      - 6379/tcp
+    volumes:
+      - redis-data:/data
+    networks:
+      local:
+
+
+  ### NocoDB Init Container ###
+  # One-shot container that initializes database settings (collation checks)
+  # Runs once before nocodb-server-1 starts, then exits
+  nocodb-init:
+    image: ${NOCODB_INIT_IMAGE:-ghcr.io/bauer-group/cs-nocodb/nocodb-init}:${NOCODB_INIT_VERSION:-latest}
+    container_name: ${STACK_NAME}_INIT
+    restart: "no"
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    environment:
+      # Timezone
+      - TZ=${TIME_ZONE:-Etc/UTC}
+
+      # Database Connection
+      - DB_HOST=database-server
+      - DB_PORT=5432
+      - DB_NAME=nocodb
+      - DB_USER=nocodb
+      - DB_PASSWORD=${DATABASE_PASSWORD}
+
+      # Task Configuration (set to "false" to disable)
+      - INIT_COLLATION_CHECK=${INIT_COLLATION_CHECK:-true}
+      - INIT_COLLATION_AUTO_FIX=${INIT_COLLATION_AUTO_FIX:-false}
+      - INIT_AUDIT_CLEANUP=${INIT_AUDIT_CLEANUP:-true}
+    depends_on:
+      database-server:
+        condition: service_healthy
+    networks:
+      local:
+
+
+  ### PostgreSQL Database ###
+  # Tuned for SSD/NVMe by default
+  # For HDD: Set PG_RANDOM_PAGE_COST=2.0, PG_EFFECTIVE_IO_CONCURRENCY=4 in .env
+  database-server:
+    image: postgres:${POSTGRES_VERSION:-18}
+    restart: unless-stopped
+    container_name: ${STACK_NAME}_DATABASE
+    # max_connections: im Cluster deutlich hoeher als im Single-Instance-Stack.
+    # Aufschluesselung siehe Kopf dieser Datei. Autovacuum- und Parallel-Worker
+    # zaehlen NICHT dagegen - PostgreSQL allokiert
+    # MaxBackends = max_connections + autovacuum_max_workers
+    #             + max_worker_processes + max_wal_senders + 1
+    command: >
+      -c max_connections=${DATABASE_POOLMAXSIZE_CLUSTER:-200}
+      -c shared_buffers=${PG_SHARED_BUFFERS_CLUSTER:-1500MB}
+      -c work_mem=${PG_WORK_MEM_CLUSTER:-8MB}
+      -c effective_cache_size=${PG_EFFECTIVE_CACHE_SIZE_CLUSTER:-4GB}
+      -c maintenance_work_mem=${PG_MAINTENANCE_WORK_MEM_CLUSTER:-256MB}
+      -c max_wal_size=${PG_MAX_WAL_SIZE:-2GB}
+      -c min_wal_size=${PG_MIN_WAL_SIZE:-512MB}
+      -c random_page_cost=${PG_RANDOM_PAGE_COST:-1.1}
+      -c seq_page_cost=1.0
+      -c effective_io_concurrency=${PG_EFFECTIVE_IO_CONCURRENCY:-200}
+      -c max_parallel_workers_per_gather=2
+      -c max_parallel_workers=4
+      -c max_parallel_maintenance_workers=2
+      -c checkpoint_completion_target=0.9
+      -c wal_buffers=16MB
+      -c default_statistics_target=100
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nocodb -d nocodb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          # ACHTUNG Wechselwirkung: shared_buffers UND work_mem x aktive
+          # Verbindungen muessen INNERHALB dieses Limits passen. work_mem gilt
+          # je Sortier-/Hash-Operation und Verbindung - bei 200 Verbindungen
+          # und 16MB sind das im schlechtesten Fall mehrere GB ZUSAETZLICH zu
+          # shared_buffers. Wer dieses Limit senkt, muss PG_SHARED_BUFFERS und
+          # PG_WORK_MEM mitziehen, sonst wird der Container OOM-gekillt.
+          cpus: "${POSTGRES_CPU_LIMIT:-6.0}"
+          memory: ${POSTGRES_MEMORY_LIMIT:-10G}
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+    environment:
+      - TZ=${TIME_ZONE:-Etc/UTC}
+      - PG_TZ=${TIME_ZONE:-Etc/UTC}
+      - POSTGRES_DB=nocodb
+      - POSTGRES_USER=nocodb
+      - POSTGRES_PASSWORD=${DATABASE_PASSWORD}
+    expose:
+      - 5432/tcp
+    volumes:
+      - database-server:/var/lib/postgresql
+    networks:
+      local:
+
+
+  ### NocoDB Backup Sidecar (Optional) ###
+  # Activate with: docker compose -f docker-compose.cluster.yml --profile backup up -d
+  #
+  # NOCODB_API_URL zeigt auf den loadbalancer, nicht auf eine feste Instanz:
+  # so profitiert das Backup von den Health-Checks und trifft nie eine gerade
+  # neu startende Instanz.
+  #
+  # Verbindungsbudget: pg_dump laeuft mit dump_format "plain" single-threaded
+  # und braucht genau EINE Verbindung (paralleles Dumping via -j gibt es nur mit
+  # dem directory-Format). Der Dump haelt allerdings bis zu
+  # NOCODB_BACKUP_DATABASE_DUMP_TIMEOUT Sekunden eine lange Transaktion offen -
+  # die blockiert keine Writes, verhindert in dieser Zeit aber, dass Autovacuum
+  # tote Tupel aufraeumt. Deshalb nicht in die Lastspitze legen.
+  nocodb-backup:
+    image: ${NOCODB_BACKUP_IMAGE:-ghcr.io/bauer-group/cs-nocodb/nocodb-backup}:${NOCODB_BACKUP_VERSION:-latest}
+    container_name: ${STACK_NAME}_BACKUP
+    profiles: ["backup"]
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    environment:
+      TZ: ${TIME_ZONE:-Etc/UTC}
+      BACKUP_LOG_LEVEL: ${NOCODB_BACKUP_LOG_LEVEL:-INFO}
+      BACKUP_LOG_FORMAT: ${NOCODB_BACKUP_LOG_FORMAT:-console}
+      # Secrets resolved by the container at runtime (kept out of the rendered config)
+      DB_PASSWORD: ${DATABASE_PASSWORD}
+      NOCODB_API_TOKEN: ${NOCODB_API_TOKEN:-}
+      BACKUP_S3_SECRET_KEY: ${NOCODB_BACKUP_S3_SECRET_KEY:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      WEBHOOK_SECRET: ${NOCODB_BACKUP_WEBHOOK_SECRET:-}
+      # NocoDB REST endpoint — also read directly by the `nocodb restore-*` commands
+      NOCODB_API_URL: ${NOCODB_API_URL:-http://loadbalancer:8080}
+      # BackupHelper engine config. Non-secret values interpolated by compose from
+      # .env; secrets use $${VAR} so the engine/plugin resolves them at runtime from
+      # the container env (never written into the rendered config).
+      BACKUP_CONFIG_JSON: |
+        {
+          "instance_name": "${NOCODB_BACKUP_INSTANCE_NAME:-${STACK_NAME:-nocodb}}",
+          "jobs": [{
+            "name": "main",
+            "keep_local": ${NOCODB_BACKUP_KEEP_LOCAL_ARCHIVE:-true},
+            "sources": [
+              {"type": "postgres", "name": "database", "enabled": ${NOCODB_BACKUP_DATABASE_DUMP:-true},
+               "host": "database-server", "port": 5432, "database": "nocodb", "user": "nocodb",
+               "password": "$${DB_PASSWORD}", "ssl_mode": "disable", "dump_format": "plain",
+               "timeout": ${NOCODB_BACKUP_DATABASE_DUMP_TIMEOUT:-1800}},
+              {"type": "filesystem", "name": "nocodb-data", "enabled": ${NOCODB_BACKUP_INCLUDE_FILES:-true},
+               "path": "/nocodb-data"},
+              {"type": "nocodb-rest", "name": "nocodb", "enabled": ${NOCODB_BACKUP_API_EXPORT:-true},
+               "api_url": "${NOCODB_API_URL:-http://loadbalancer:8080}", "token": "$${NOCODB_API_TOKEN}",
+               "include_records": ${NOCODB_BACKUP_INCLUDE_RECORDS:-true},
+               "include_attachments": ${NOCODB_BACKUP_INCLUDE_ATTACHMENTS:-true}}
+            ],
+            "destinations": [
+              {"type": "local"},
+              {"type": "s3", "endpoint": "${NOCODB_BACKUP_S3_ENDPOINT_URL:-}", "bucket": "${NOCODB_BACKUP_S3_BUCKET:-}",
+               "access_key": "${NOCODB_BACKUP_S3_ACCESS_KEY:-}", "secret_key": "$${BACKUP_S3_SECRET_KEY}",
+               "region": "${NOCODB_BACKUP_S3_REGION:-eu-north-1}", "prefix": "${NOCODB_BACKUP_S3_PREFIX:-nocodb/}"}
+            ],
+            "schedule": {"mode": "${NOCODB_BACKUP_SCHEDULE_MODE:-cron}",
+                         "hour": "${NOCODB_BACKUP_SCHEDULE_HOUR:-5}", "minute": "${NOCODB_BACKUP_SCHEDULE_MINUTE:-15}",
+                         "day_of_week": "${NOCODB_BACKUP_SCHEDULE_DAY_OF_WEEK:-*}",
+                         "interval_hours": ${NOCODB_BACKUP_SCHEDULE_INTERVAL_HOURS:-24},
+                         "on_startup": ${NOCODB_BACKUP_ON_STARTUP:-false}},
+            "retention": {"count": ${NOCODB_BACKUP_RETENTION_COUNT:-30}},
+            "notifications": {
+              "channels": "${NOCODB_BACKUP_ALERT_CHANNELS:-}",
+              "level": "${NOCODB_BACKUP_ALERT_LEVEL:-warnings}",
+              "email": {"host": "${SMTP_HOST:-}", "port": ${SMTP_PORT:-587}, "tls": ${SMTP_TLS:-true},
+                        "username": "${SMTP_USER:-}", "password": "$${SMTP_PASSWORD}",
+                        "sender": "${SMTP_FROM:-}", "recipients": ["${NOCODB_BACKUP_ALERT_EMAIL:-}"]},
+              "webhook": {"url": "${NOCODB_BACKUP_WEBHOOK_URL:-}", "secret": "$${WEBHOOK_SECRET}"},
+              "teams": {"url": "${NOCODB_BACKUP_TEAMS_WEBHOOK:-}"}
+            }
+          }]
+        }
+    volumes:
+      - nocodb-backup-data:/data
+      - nocodb-data:/nocodb-data
+    depends_on:
+      database-server:
+        condition: service_healthy
+      loadbalancer:
+        condition: service_healthy
+    networks:
+      local:
+
+
+### Configs ###
+# HAProxy-Konfiguration inline - der Stack ist damit allein aus
+# Compose-Datei + .env deploybar, ohne zusaetzliche Dateien aus dem Repo.
+#
+# ACHTUNG: ${...} wird hier von COMPOSE aufgeloest, nicht von HAProxy.
+# In der gerenderten Datei stehen also literale Werte. Wer eine Variable
+# an HAProxy selbst durchreichen will, muss $${...} schreiben - und dort
+# gelten dann HAProxys eigene Regeln (Anfuehrungszeichen zwingend, sonst
+# wird das Argument STILL ignoriert).
+configs:
+  haproxy_cfg:
+    content: |
+      global
+          log stdout format raw local0 info
+          maxconn 8000
+          # Kein "user"/"group": Das Image setzt bereits USER haproxy (uid 99); ein
+          # setuid-Versuch als Nicht-Root erzeugt eine Startup-Alert.
+          stats socket /var/lib/haproxy/haproxy.sock mode 660 level admin
+          stats timeout 30s
+          ssl-default-bind-options ssl-min-ver TLSv1.2 no-tls-tickets
+
+      defaults
+          mode    http
+          log     global
+          option  httplog
+          option  dontlognull
+          option  http-server-close
+          option  redispatch
+          retries 3
+          # Fail-Fast: NocoDB setzt intern acquireConnectionTimeout auf 600000 ms
+          # (10 Minuten). Ist der Knex-Pool erschoepft, lehnt die App NICHT ab - sie
+          # haelt den Request offen. "timeout server" schneidet das auf 60s ab.
+          # "timeout tunnel" ueberschreibt client+server nach einem WebSocket-Upgrade,
+          # deshalb duerfen die 60s aggressiv sein, ohne socket.io zu zerstoeren.
+          timeout connect          5s
+          timeout client          60s
+          timeout server          60s
+          timeout http-request    10s
+          timeout http-keep-alive 10s
+          timeout queue           30s
+          timeout tunnel          24h
+          timeout client-fin      30s
+          timeout check            5s
+
+      # Dockers eingebetteter Resolver. ZWINGEND: statische server-Zeilen loest
+      # HAProxy einmal beim Start via libc auf und cacht das fuer die Prozesslaufzeit.
+      # Nach "docker compose up -d" bekommt ein neu erstellter Container haeufig eine
+      # neue IP - HAProxy wuerde sonst dauerhaft auf die tote Adresse verbinden.
+      resolvers docker
+          nameserver dns1 127.0.0.11:53
+          resolve_retries        3
+          timeout resolve        1s
+          timeout retry          1s
+          hold valid            10s
+          hold other            10s
+          hold refused          10s
+          hold nx               10s
+          hold timeout          10s
+          hold obsolete         10s
+          accepted_payload_size 8192
+
+      frontend fe_nocodb
+          bind :8080
+          maxconn 4000
+
+          # --- Client-IP-Normalisierung -------------------------------------------
+          # Vertrauensgrenze: wer darf per X-Forwarded-For eine Client-Identitaet
+          # behaupten? Bei Cloudflare mit proxied DNS DIREKT auf HAProxy (ohne Tunnel)
+          # muessen hier Cloudflares IP-Ranges stehen, sonst wird ein gefaelschter XFF
+          # eines Direct-to-Origin-Angreifers vertraut.
+          acl trusted_edge src 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 127.0.0.0/8 ::1 fd00::/8
+
+          # HAProxy ist selbst Edge -> Gegenstelle untrusted -> alles ueberschreiben.
+          # set-header entfernt vorhandene Vorkommen zuerst; das macht es
+          # spoofing-sicher.
+          http-request set-header X-Forwarded-For   %[src]                    unless trusted_edge
+          http-request set-header X-Real-IP         %[src]                    unless trusted_edge
+          http-request set-header X-Forwarded-Proto %[ssl_fc,iif(https,http)] unless trusted_edge
+          http-request set-header X-Forwarded-Port  %[dst_port]               unless trusted_edge
+
+          # Hinter vertrauenswuerdigem Edge: dessen XFF unveraendert lassen und KEINEN
+          # Hop addieren, damit NocoDB in beiden Topologien dieselbe Hop-Form sieht.
+          # Bewusst NICHT "option forwardfor" - das haengt laut Handbuch immer an und
+          # liesse einen client-gelieferten XFF an linkester Position stehen. NocoDB
+          # hardcodiert Express "trust proxy = true" und liest genau diese Position.
+          http-request set-header X-Forwarded-For %[src] if trusted_edge !{ req.hdr(X-Forwarded-For) -m found }
+          http-request set-header X-Real-IP %[req.hdr_ip(X-Forwarded-For,1)] if trusted_edge !{ req.hdr(X-Real-IP) -m found }
+
+          # Alternative Client-IP-Header entfernen. NocoDB ermittelt die Client-IP an
+          # ZWEI Stellen: req.ip (Express, Audit-Log) und req.clientIp (Middleware
+          # "request-ip", Import-Provenienz). Letztere ignoriert "trust proxy" und
+          # prueft X-Client-IP VOR X-Forwarded-For - XFF allein reicht also nicht.
+          http-request del-header X-Client-IP
+          http-request del-header CF-Connecting-IP
+          http-request del-header True-Client-IP
+          http-request del-header Fastly-Client-IP
+          http-request del-header DO-Connecting-IP
+          http-request del-header X-Forwarded-Server
+          http-request del-header Proxy
+
+          # --- KEIN Rate Limiting -------------------------------------------------
+          # Bewusste Entscheidung, nicht vergessen.
+          #
+          # Ein Per-IP-Ratelimit passt nicht zu diesem Lastprofil: Automatisierungen
+          # wie n8n kommen mit vielen parallelen Workern von EINER Quell-IP. Ein
+          # solcher Zaehler trifft damit nie einen Angreifer, sondern immer zuerst den
+          # eigenen, legitimen Traffic. Zusaetzlich laedt die NocoDB-Oberflaeche rund
+          # 150 Asset-Chunks pro Seitenaufruf - schon zwei Seitenaufrufe sprengen jede
+          # sinnvolle Schwelle und erzeugen 429.
+          #
+          # Der Schutz dieses Stacks ist "maxconn" + Queue weiter unten: er begrenzt
+          # GLEICHZEITIGKEIT statt Rate und lehnt nichts ab, sondern stellt an. Bei
+          # Massen-Inserts ist genau das gewuenscht.
+          #
+          # Falls doch ein Missbrauchsschutz gebraucht wird, dann gezielt und mit
+          # Ausnahme fuer die eigenen Automatisierungs-Quellen:
+          #   acl is_automation src 10.1.2.3
+          #   http-request track-sc0 req.hdr_ip(X-Forwarded-For,1) table st_abuse if !is_automation
+          #   http-request deny deny_status 429 if !is_automation { sc_http_req_rate(0) gt 2000 }
+          # Der Schwellwert MUSS literal stehen - HAProxy expandiert in numerischen
+          # ACL-Operanden keine Variablen.
+          # backend st_abuse
+          #     stick-table type ipv6 size 200k expire 60s store http_req_rate(10s)
+
+          acl is_socketio path_beg /socket.io/
+          use_backend be_nocodb_ws if is_socketio
+          default_backend be_nocodb_api
+
+      # Gleicher Cookie-Name und gleiche sN-Labels in beiden Backends: ein von einem
+      # Backend gesetztes Cookie wird vom anderen honoriert. Ein Client landet damit
+      # fuer REST und WebSocket auf demselben Container, waehrend die maxconn-Konten
+      # getrennt bleiben.
+
+      backend be_nocodb_api
+          # DB-gebundener Pfad -> hart begrenzt.
+          balance leastconn
+          cookie NCSRVID insert indirect nocache httponly secure attr SameSite=Lax
+
+          # /api/v1/health ist PFLICHT - NICHT "/". NocoDB bindet den Port BEVOR die
+          # Migrationen laufen; "/" liefert sofort 200 aus den statischen Assets und
+          # waere falsch-positiv. Bei HTTP/1.1 fuegt http-check send KEINEN Host-Header
+          # hinzu - ohne "hdr Host" waere der Check ein malformter Request.
+          option httpchk
+          http-check send meth GET uri /api/v1/health ver HTTP/1.1 hdr Host nocodb
+          http-check expect status 200
+
+          # maxconn: Request N+1 wird GEQUEUET, nicht abgelehnt; 503 erst nach
+          #   "timeout queue". Der Wert MUSS NC_DB_POOL_MAX entsprechen - mehr
+          #   gleichzeitige Requests als Pool-Slots verschiebt die Queue nur von
+          #   HAProxy (sichtbar, mit Timeout) nach Knex (unsichtbar, 10 Minuten).
+          #   Deshalb speist dieselbe Compose-Variable beide Seiten.
+          # maxqueue: bewusst NICHT gesetzt - eine volle Server-Queue wuerde
+          #   redispatchen und dabei die Cookie-Persistenz brechen.
+          # init-addr last,none: HAProxy startet auch, wenn noch kein NocoDB-Container
+          #   existiert (Server dann DOWN statt Boot-Abbruch).
+          default-server check inter 10s fastinter 2s downinter 15s fall 3 rise 2 maxconn ${NC_DB_POOL_MAX_CLUSTER:-10} resolvers docker init-addr last,none observe layer7 error-limit 10 on-error mark-down
+          server nocodb1 nocodb-server-1:8080 cookie s1
+          server nocodb2 nocodb-server-2:8080 cookie s2
+          server nocodb3 nocodb-server-3:8080 cookie s3
+          server nocodb4 nocodb-server-4:8080 cookie s4
+          server nocodb5 nocodb-server-5:8080 cookie s5
+          server nocodb6 nocodb-server-6:8080 cookie s6
+          server nocodb7 nocodb-server-7:8080 cookie s7
+          server nocodb8 nocodb-server-8:8080 cookie s8
+
+      backend be_nocodb_ws
+          # /socket.io/ ist nicht DB-gebunden und ueberwiegend idle -> eigenes,
+          # grosszuegiges Budget. In HTTP-Mode begrenzt maxconn gleichzeitige
+          # REQUESTS, und ein aufgestiegener WebSocket haelt seinen Slot ueber die
+          # gesamte Verbindungsdauer: in einem gemeinsamen Backend haetten wenige
+          # Dutzend offene Browser-Tabs den Cluster belegt, ohne einen einzigen
+          # REST-Request. Fuer den Upgrade selbst ist nichts weiter noetig als
+          # mode http und "timeout tunnel".
+          balance leastconn
+          cookie NCSRVID insert indirect nocache httponly secure attr SameSite=Lax
+          option httpchk
+          http-check send meth GET uri /api/v1/health ver HTTP/1.1 hdr Host nocodb
+          http-check expect status 200
+          default-server check inter 10s fastinter 2s downinter 15s fall 3 rise 2 maxconn ${HAPROXY_WS_MAXCONN:-500} resolvers docker init-addr last,none
+          server nocodb1 nocodb-server-1:8080 cookie s1
+          server nocodb2 nocodb-server-2:8080 cookie s2
+          server nocodb3 nocodb-server-3:8080 cookie s3
+          server nocodb4 nocodb-server-4:8080 cookie s4
+          server nocodb5 nocodb-server-5:8080 cookie s5
+          server nocodb6 nocodb-server-6:8080 cookie s6
+          server nocodb7 nocodb-server-7:8080 cookie s7
+          server nocodb8 nocodb-server-8:8080 cookie s8
+
+      # Stats nur ueber Loopback INNERHALB des Containers:
+      #   docker exec -it <STACK>_LB wget -qO- http://127.0.0.1:8404/stats
+      # Niemals oeffentlich veroeffentlichen - die Seite legt Backend-Namen, IPs und
+      # Live-Verbindungszahlen offen. "stats admin" bewusst NICHT aktiviert.
+      listen stats
+          bind 127.0.0.1:8404
+          mode http
+          stats enable
+          stats uri /stats
+          stats refresh 10s
+          stats hide-version
+          stats realm HAProxy\ Statistics
+          stats auth ${HAPROXY_STATS_USER:-admin}:${HAPROXY_STATS_PASSWORD:-changeme}
+          http-request deny unless { src 127.0.0.0/8 } || { src ::1 }
+
+      # Health + Metriken fuer Docker-Healthcheck und Monitoring.
+      frontend fe_monitoring
+          bind :8405
+          mode http
+          # monitor-uri wird sehr frueh ausgewertet, vor jeder http-request-Regel -
+          # das abschliessende "deny" betrifft es nicht.
+          monitor-uri /healthz
+          # Ohne diese Zeile lieferte /healthz auch dann 200, wenn ALLE Backends DOWN
+          # sind - solange HAProxy selbst laeuft.
+          monitor fail if { nbsrv(be_nocodb_api) lt 1 }
+          http-request use-service prometheus-exporter if { path /metrics }
+          http-request deny
+
+
+### Volumes ###
+volumes:
+  nocodb-data:
+    driver: local
+    name: ${STACK_NAME}-nocodb
+
+  database-server:
+    driver: local
+    name: ${STACK_NAME}-postgres
+
+  nocodb-backup-data:
+    driver: local
+    name: ${STACK_NAME}-nocodb-backup
+
+  redis-data:
+    driver: local
+    name: ${STACK_NAME}-redis
+
+
+### Networks ###
+networks:
+  local:
+    driver: bridge
+    name: ${STACK_NAME}
+    enable_ipv6: true
+
+  proxy:
+    name: ${PROXY_NETWORK}
+    external: true

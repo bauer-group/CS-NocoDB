@@ -34,14 +34,51 @@ services:
     environment:
       - TZ=${TIME_ZONE:-Etc/UTC}
       - NC_DB=pg://database-server:5432?u=nocodb&p=${DATABASE_PASSWORD}&d=nocodb
-      - NC_DISABLE_TELE=true
-      - NC_DISABLE_AUDIT=true
-      - NC_INVITE_ONLY_SIGNUP=true
+      - NC_APP_DATA_DIR=/usr/app/data
+      - NC_SITE_URL=${NC_SITE_URL:-http://localhost:${EXPOSED_APP_PORT:-8080}}
 
-      # Database Connection Pool (max: 100, default: 10)
-      # Compose-Default: Production-Profil (50 Connections, ~5-20 User)
-      # Hochlast-Tuning (1000+ parallel) -> in .env: DB_MAX_POOL_SIZE=80
-      - DB_MAX_POOL_SIZE=${DB_MAX_POOL_SIZE:-50}
+      # Telemetry & Error-Reporting (zwei getrennte Schalter!)
+      # NC_DISABLE_ERR_REPORTS mit Plural-S - die Singular-Form existiert nicht.
+      - NC_DISABLE_TELE=true
+      - NC_DISABLE_ERR_REPORTS=true
+      - NC_DISABLE_SUPPORT_CHAT=true
+      - NC_DISABLE_AUDIT=true
+
+      # Auth
+      # NC_AUTH_JWT_SECRET: ohne Vorgabe generiert NocoDB eine uuidv4 und legt
+      # sie in nc_store ab. Explizit pinnen, damit ein Restore ohne diese Tabelle
+      # nicht alle Sessions invalidiert.
+      # HINWEIS: "Invite Only Signup" ist KEINE Env-Variable. Das frueher hier
+      # gesetzte NC_INVITE_ONLY_SIGNUP wird von NocoDB nirgends gelesen. Der
+      # reale Schalter ist das invite_only_signup-Flag in nc_store (Default:
+      # false = offene Registrierung) und nur ueber die Super-Admin-UI bzw. die
+      # App-Settings-API setzbar.
+      - NC_AUTH_JWT_SECRET=${NC_AUTH_JWT_SECRET}
+      - NC_JWT_EXPIRES_IN=${NC_JWT_EXPIRES_IN:-12h}
+
+      # Verschluesselung der Credentials externer Datenquellen (sources-Tabelle).
+      # BEWUSST NICHT GESETZT - Opt-in, siehe .env.example.
+      #
+      # Ohne Key bleiben die Credentials im Klartext in der Datenbank (und damit
+      # in jedem pg_dump). Das ist der Zustand seit jeher und eine bewusste
+      # Abwaegung: das Aktivieren ist IRREVERSIBEL und loest beim Start eine
+      # Re-Encrypt-Migration aus, die bei mehreren gleichzeitig startenden
+      # Instanzen die Credentials durch Doppelverschluesselung zerstoert.
+      #
+      # Ein leerer Wert ist sicher: initDataSourceEncryption.ts prueft
+      #   if (!process.env.NC_CONNECTION_ENCRYPT_KEY) return;
+      # - leerer String ist falsy, die Migration wird also uebersprungen.
+      #
+      # Aktivieren nur bewusst und nach der Anleitung in .env.example.
+      - NC_CONNECTION_ENCRYPT_KEY=${NC_CONNECTION_ENCRYPT_KEY:-}
+
+      # Knex/tarn Connection Pool.
+      # Korrekter Variablenname laut NocoDB-Quelltext
+      # (utils/nc-config/constants.ts):  pool.max = +NC_DB_POOL_MAX || 10
+      # Das frueher hier gesetzte DB_MAX_POOL_SIZE existiert in NocoDB nicht und
+      # war wirkungslos - der Pool lag faktisch immer beim Default von 10.
+      # Achtung: 0 oder ein Tippfehler ergibt NaN -> stiller Rueckfall auf 10.
+      - NC_DB_POOL_MAX=${NC_DB_POOL_MAX:-50}
 
       # Query & Bulk Operation Limits (NocoDB defaults: 100 - here 1000)
       - DB_QUERY_LIMIT_DEFAULT=${DB_QUERY_LIMIT_DEFAULT:-25}
@@ -52,24 +89,25 @@ services:
       - NC_DATA_PAYLOAD_LIMIT=${NC_DATA_PAYLOAD_LIMIT:-100000}
       - NC_REQUEST_BODY_SIZE=${NC_REQUEST_BODY_SIZE:-268435456}
 
-      # API Rate Limiting (fest verdrahtet - API-Zugriff ist Token-gated)
-      # NocoDB-Defaults (5 req/sec mit 30s Block) sind fuer reale Workloads
-      # untauglich. Da nur autorisierte API-Token-Inhaber zugreifen koennen,
-      # ist Konfigurierbarkeit hier kein Wert - hochgesetzte Limits gelten
-      # fuer alle Instanzen.
-      - NC_RATE_LIMIT_DATA_API_MAX_REQUESTS=5000
-      - NC_RATE_LIMIT_DATA_API_DURATION=1000
-      - NC_RATE_LIMIT_DATA_API_BLOCK_DURATION=0
-      - NC_RATE_LIMIT_META_API_MAX_REQUESTS=120
-      - NC_RATE_LIMIT_META_API_BLOCK_DURATION=0
+      # API Rate Limiting existiert in NocoDB OSS NICHT.
+      # Die frueher hier gesetzten NC_RATE_LIMIT_*-Variablen werden nirgends
+      # gelesen, und alle drei Limiter-Guards (data-/meta-/public-api-limiter)
+      # sind bewusste No-Ops:  async canActivate() { return true; }
+      # Upstream verweist dafuer ausdruecklich auf den Reverse Proxy.
+      # -> Rate Limiting gehoert in Traefik bzw. in den HAProxy des
+      #    Cluster-Stacks (docker-compose.cluster.yml), nicht hierher.
 
       # SMTP Configuration
+      # ACHTUNG Semantik: NC_SMTP_IGNORE_TLS steuert STARTTLS, NICHT die
+      # Zertifikatspruefung. Der Schalter dafuer ist NC_SMTP_REJECT_UNAUTHORIZED
+      # und steht bei NocoDB per Default auf false (= keine Pruefung).
       - NC_SMTP_HOST=${SMTP_HOST}
       - NC_SMTP_PORT=${SMTP_PORT}
       - NC_SMTP_USERNAME=${SMTP_USER}
       - NC_SMTP_PASSWORD=${SMTP_PASSWORD}
       - NC_SMTP_SECURE=${SMTP_TLS}
-      - NC_SMTP_IGNORE_TLS=${SMTP_CERTCHECK}
+      - NC_SMTP_IGNORE_TLS=${SMTP_IGNORE_TLS:-false}
+      - NC_SMTP_REJECT_UNAUTHORIZED=${SMTP_CERTCHECK:-true}
       - NC_SMTP_FROM=${SMTP_FROM_NAME} <${SMTP_FROM}>
 
       # Attachment Settings

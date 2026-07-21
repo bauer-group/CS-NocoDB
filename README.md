@@ -43,6 +43,8 @@ open http://localhost:8080
 
 ### Deployment-Modi
 
+**Single-Instance** (eine NocoDB-Instanz):
+
 | Modus | Compose-File | Beschreibung | Anwendungsfall |
 |-------|--------------|--------------|----------------|
 | **Local** | `docker-compose.local.yml` | Direkter Port-Zugriff | Entwicklung, lokaler Test |
@@ -50,6 +52,13 @@ open http://localhost:8080
 | **Traefik Local** | `docker-compose.traefik-local.yml` | HTTP + IP-Whitelist | Internes Netzwerk |
 | **Traefik Header Auth** | `docker-compose.traefik-header-auth.yml` | HTTPS + Header-Auth | API-Zugriff, Reverse Proxy |
 | **Development** | `docker-compose.development.yml` | Lokale Image-Builds + MinIO | Entwicklung, Testing |
+
+**Cluster** (HAProxy + mehrere NocoDB-Instanzen + Redis):
+
+| Modus | Compose-File | Beschreibung | Anwendungsfall |
+|-------|--------------|--------------|----------------|
+| **Cluster** | `docker-compose.cluster.yml` | HAProxy + 4/6/8 Instanzen + Redis, HTTPS | Hohe API-Last, viele parallele Zugriffe |
+| **Cluster Development** | `docker-compose.cluster-development.yml` | HAProxy + 2 Instanzen + Redis, Builds + MinIO | Cluster-Verhalten lokal testen |
 
 #### Local Mode
 
@@ -114,6 +123,140 @@ docker compose -f docker-compose.development.yml --profile backup up -d --build
 - Lokale Image-Builds aus `src/` Verzeichnis
 - MinIO als lokaler S3-Ersatz (Port 9001)
 - Ideal für Testing von Backup-Funktionen
+
+#### Cluster Mode
+
+Für hohe API-Last, etwa viele parallele Schreibzugriffe aus Automatisierungen:
+
+```bash
+docker compose -f docker-compose.cluster.yml up -d
+# Zugriff: https://${SERVICE_HOSTNAME}
+```
+
+**Warum ein Cluster:** NocoDB ist ein einzelner Node-Prozess und damit
+single-threaded — eine Instanz nutzt genau **einen** CPU-Core, unabhängig davon,
+wie viele der Host hat. Es gibt keinen Cluster-Mode im Prozess selbst. Mehr
+Durchsatz gibt es ausschließlich über mehr Container.
+
+Der Cluster-Stack bringt drei Dinge mit, die der Single-Instance-Stack nicht hat:
+
+| Komponente | Aufgabe |
+|------------|---------|
+| **HAProxy** | Load Balancer *im* Stack — damit ist der Stack unabhängig vom Edge-Proxy (funktioniert genauso hinter nginx, Caddy, cloudflared oder an einem direkt gebundenen Port) |
+| **Redis** | Gemeinsamer Metadaten-Cache, Job-Queue und socket.io-Backplane. **Zwingend** — ohne Redis sehen die Instanzen die Schemaänderungen der jeweils anderen nicht, und Live-Updates erreichen nur die eigene Instanz |
+| **Migrations-Gate** | `nocodb-server-1` läuft als Erster, alle anderen warten per `depends_on` auf dessen Health |
+
+**Die Concurrency-Bremse ist der eigentliche Gewinn.** Ein Node-Prozess lehnt
+Überlast nicht ab — er nimmt alle Requests an und teilt eine CPU unter ihnen auf.
+Bei 500 gleichzeitigen Requests bekommt jeder 1/500, alles läuft gemeinsam in den
+Timeout, *inklusive Healthcheck*. Die Instanz flappt DOWN, ihr Traffic fällt auf
+die übrigen, die daran ebenfalls ersticken. HAProxy begrenzt deshalb die
+gleichzeitigen Requests je Instanz auf `NC_DB_POOL_MAX` und stellt den Rest in
+eine Queue mit definiertem Timeout:
+
+| Stufe | Grenze | Ergebnis |
+|-------|--------|----------|
+| Instanz ausgelastet | `maxconn` (= `NC_DB_POOL_MAX_CLUSTER`) | Queue, kein Fehler |
+| Zu lange in der Queue | `timeout queue` (30s) | **503** |
+| Instanz zu langsam | `timeout server` (60s) | **504** |
+| WebSocket aktiv | `timeout tunnel` (24h) | überschreibt client+server |
+
+Ohne diese Grenze hängt ein Request bis zu **10 Minuten** — so lange wartet
+NocoDBs interner `acquireConnectionTimeout` auf eine freie DB-Verbindung, bevor
+er aufgibt.
+
+#### Was den Durchsatz begrenzt — und was NICHT
+
+> Diese Werte stammen aus einem Lasttest (Docker Desktop, 8 Kerne, viele kleine
+> Einzel-Inserts über die Record-API). Die absoluten Zahlen übertragen sich
+> nicht 1:1 auf einen 24-Core-Server, die **Verhältnisse** aber schon.
+
+Unter Last steht **NocoDB bei ~105 % CPU** (ein Kern voll ausgelastet),
+**PostgreSQL bei ~11 %**. Der Engpass ist der einzelne JavaScript-Thread, der
+jeden Request parst, authentifiziert, validiert und serialisiert — nicht die
+Datenbank und nicht der Connection-Pool.
+
+Daraus folgt, was messbar hilft und was nicht:
+
+| Maßnahme | Gemessener Effekt |
+|----------|-------------------|
+| `NC_DB_POOL_MAX` 10 → 80 (Single-Instance) | **+9 %** — der Pool war nie der Engpass |
+| PostgreSQL `synchronous_commit=off` / `commit_delay` | **0 % / negativ** — die DB ist nicht der Engpass |
+| **Mehr Instanzen** (mehr JS-Threads) | **der eigentliche Hebel** — der einzige Weg, mehr Kerne zu nutzen |
+| **Bulk-Inserts** (Arrays statt Einzelsätze) | **~11×** — falls der API-Client sie senden kann |
+
+**Konsequenz:** Der Pool-Fix und PG-Tuning lösen ein Durchsatzproblem durch
+viele kleine Einzel-Requests **nicht**. Wirksam sind nur zwei Dinge — mehr
+Instanzen (dieser Cluster) und, wo der Client es erlaubt, das Bündeln vieler
+Datensätze in einen Request (`POST /api/v2/tables/{tableId}/records` mit einem
+Array). Der HAProxy-`maxconn` löst ein **anderes** Problem: nicht den Durchsatz,
+sondern die Überlast-Lawine (das ursprüngliche 504-Symptom).
+
+Für insert-lastige Workloads kann ein höherer `NC_DB_POOL_MAX_CLUSTER`
+(z. B. 20–25) mehr Durchsatz bringen, weil mehr Sätze gleichzeitig in Bearbeitung
+sind — **an der eigenen Last messen**, der JS-Thread bleibt die harte Grenze.
+
+**Voraussetzungen:**
+
+- Alles aus dem Traefik-Modus (externes Netz, DNS, Certresolver)
+- Host-Ressourcen passend zur gewählten Skalierungsstufe (siehe Tabelle unten):
+  **16 GB / 16 Cores** für Stufe S bis **32 GB / 24 Cores** für Stufe L
+- `NC_AUTH_JWT_SECRET` gesetzt und auf **allen** Instanzen identisch — sonst
+  akzeptiert Instanz B die von Instanz A ausgestellten Tokens nicht
+
+> **`NC_CONNECTION_ENCRYPT_KEY` ist bewusst nicht gesetzt.** Die Zugangsdaten
+> externer Datenquellen bleiben damit unverschlüsselt in der Datenbank — so wie
+> bisher auch. Das Aktivieren ist **irreversibel** und darf nur mit *genau einer*
+> laufenden Instanz erfolgen, weil parallel startende Instanzen die Credentials
+> durch Doppelverschlüsselung zerstören. Anleitung dazu in `.env.example`.
+
+**Skalierungsstufen.** Die Instanzzahl wird über Compose-Profile gesteuert —
+entweder in der `.env` (`COMPOSE_PROFILES=`) oder per `--profile` auf der
+Kommandozeile. Der gesamte Stack ist dabei auf ein Ressourcenbudget begrenzt;
+alle Container haben Limits, nicht nur die NocoDB-Instanzen:
+
+| Stufe | `COMPOSE_PROFILES` | Instanzen | Budget | Summe der Limits |
+|-------|--------------------|-----------|--------|------------------|
+| **S** | *(leer)* | 4 | 16 GB / 16 Cores | 15,0 Cores / 15,21 GB |
+| **M** | `scale6` | 6 | 24 GB / 20 Cores | 20,0 Cores / 21,00 GB |
+| **L** | `scale8` | 8 | 32 GB / 24 Cores | 23,0 Cores / 30,00 GB |
+
+**Wichtig:** Das Profil ändert nur die *Anzahl* der Instanzen. Die zugehörigen
+Limits für PostgreSQL, Redis und HAProxy müssen zur Stufe passen — `.env.example`
+enthält je Stufe einen vollständigen, kopierbaren Block sowie eine Tabelle,
+welche Werte beim Ändern zwingend zusammen angepasst werden müssen.
+
+Nachrechnen:
+
+```bash
+docker compose -f docker-compose.cluster.yml config | grep -E "cpus:|memory:"
+```
+
+Warum nicht mehr Instanzen: PostgreSQL degradiert jenseits von etwa 2–4× CPU-Cores
+an *aktiven* Verbindungen. Bei 24 Cores liegt das Optimum bei 50–100 — das
+erreichen bereits 8 Instanzen × Pool 10. Ein größerer Pool je Instanz macht die
+Datenbank langsamer, nicht schneller.
+
+**Lokal testen:**
+
+```bash
+docker compose -f docker-compose.cluster-development.yml up -d --build
+# Zugriff: http://localhost:${EXPOSED_APP_PORT}
+```
+
+Zwei Instanzen reichen aus, um alles zu prüfen, was am Cluster-Betrieb anders
+ist: Migrations-Gate, Cache-Kohärenz über Redis, socket.io-Fan-out und Sticky
+Sessions.
+
+**HAProxy-Statusseite** (nur innerhalb des Containers erreichbar, bewusst nicht
+aus dem Docker-Netz):
+
+```bash
+docker exec -it ${STACK_NAME}_LB wget -qO- http://127.0.0.1:8404/stats
+```
+
+Unter Last sind `qcur`/`qmax` > 0 dort **kein Warnsignal**, sondern der Beleg,
+dass die Queue arbeitet und die Überlast vor der Datenbank abgefangen wird.
 
 ### Backup-Sidecar
 
@@ -226,6 +369,11 @@ NocoDB/
 ├── docker-compose.traefik-local.yml      # Traefik HTTP + IP-Whitelist
 ├── docker-compose.traefik-header-auth.yml # Traefik HTTPS + Header-Auth
 ├── docker-compose.development.yml        # Development mit MinIO
+│
+├── docker-compose.cluster.yml            # Cluster: HAProxy + 4/6/8 Instanzen + Redis
+├── docker-compose.cluster-development.yml # Cluster lokal: 2 Instanzen + MinIO
+├── haproxy/
+│   └── haproxy.cfg                       # Load-Balancer-Config (beide Cluster-Modi)
 │
 ├── src/
 │   ├── nocodb/                           # NocoDB Base Image (Custom Build)
@@ -403,8 +551,19 @@ Diese Einstellungen sind in allen Compose-Files vorkonfiguriert:
 | Einstellung | Wert | Beschreibung |
 |-------------|------|--------------|
 | `NC_DISABLE_TELE` | `true` | Telemetrie deaktiviert |
+| `NC_DISABLE_ERR_REPORTS` | `true` | Error-Reporting deaktiviert (eigener Schalter, **nicht** von `NC_DISABLE_TELE` abgedeckt) |
+| `NC_DISABLE_SUPPORT_CHAT` | `true` | Drittanbieter-Chat-Widget deaktiviert |
 | `NC_DISABLE_AUDIT` | `true` | Audit-Logging deaktiviert |
-| `NC_INVITE_ONLY_SIGNUP` | `true` | Registrierung nur per Einladung |
+
+> **Registrierung nur per Einladung ist keine Umgebungsvariable.**
+> Frühere Versionen dieses Stacks setzten `NC_INVITE_ONLY_SIGNUP=true`. Diese
+> Variable existiert in NocoDB nicht und wurde nirgends gelesen — die
+> Registrierung stand trotz der Einstellung **offen**.
+>
+> Der reale Schalter ist das Flag `invite_only_signup` in der Tabelle
+> `nc_store`, Default `false`. Es ist ausschließlich über die
+> **Super-Admin-UI** (Account Settings) oder die App-Settings-API setzbar.
+> Nach jeder Neuinstallation aktiv prüfen.
 
 #### Optionale Einstellungen
 
@@ -564,6 +723,8 @@ open http://localhost:8080
 
 ### Deployment Modes
 
+**Single-instance** (one NocoDB instance):
+
 | Mode | Compose File | Description | Use Case |
 |------|-------------|-------------|----------|
 | **Local** | `docker-compose.local.yml` | Direct port access | Development, local testing |
@@ -571,6 +732,13 @@ open http://localhost:8080
 | **Traefik Local** | `docker-compose.traefik-local.yml` | HTTP + IP whitelist | Internal network |
 | **Traefik Header Auth** | `docker-compose.traefik-header-auth.yml` | HTTPS + header auth | API access, reverse proxy |
 | **Development** | `docker-compose.development.yml` | Local image builds + MinIO | Development, testing |
+
+**Cluster** (HAProxy + multiple NocoDB instances + Redis):
+
+| Mode | Compose File | Description | Use Case |
+|------|-------------|-------------|----------|
+| **Cluster** | `docker-compose.cluster.yml` | HAProxy + 4/6/8 instances + Redis, HTTPS | High API load, many parallel requests |
+| **Cluster Development** | `docker-compose.cluster-development.yml` | HAProxy + 2 instances + Redis, builds + MinIO | Testing cluster behaviour locally |
 
 #### Local Mode
 
@@ -636,6 +804,139 @@ docker compose -f docker-compose.development.yml --profile backup up -d --build
 - Local image builds from `src/` directory
 - MinIO as local S3 replacement (port 9001)
 - Ideal for testing backup functionality
+
+#### Cluster Mode
+
+For high API load, e.g. many parallel writes from automation:
+
+```bash
+docker compose -f docker-compose.cluster.yml up -d
+# Access: https://${SERVICE_HOSTNAME}
+```
+
+**Why a cluster:** NocoDB is a single Node process and therefore
+single-threaded — one instance uses exactly **one** CPU core, no matter how many
+the host has. There is no in-process cluster mode. More throughput is only
+available through more containers.
+
+The cluster stack adds three things the single-instance stack does not have:
+
+| Component | Purpose |
+|-----------|---------|
+| **HAProxy** | Load balancer *inside* the stack — makes the stack independent of the edge proxy (works equally behind nginx, Caddy, cloudflared, or a directly bound port) |
+| **Redis** | Shared metadata cache, job queue and socket.io backplane. **Mandatory** — without it, instances do not see each other's schema changes and live updates only reach the emitting instance |
+| **Migration gate** | `nocodb-server-1` starts first; all others wait on its health via `depends_on` |
+
+**The concurrency limit is the actual win.** A Node process does not reject
+overload — it accepts every request and splits one CPU among them. At 500
+concurrent requests each gets 1/500, everything times out together *including
+the health check*. The instance flaps DOWN, its traffic lands on the others,
+which choke on it too. HAProxy therefore caps concurrent requests per instance
+at `NC_DB_POOL_MAX` and queues the rest with a defined timeout:
+
+| Stage | Limit | Result |
+|-------|-------|--------|
+| Instance saturated | `maxconn` (= `NC_DB_POOL_MAX_CLUSTER`) | queued, no error |
+| Queued too long | `timeout queue` (30s) | **503** |
+| Instance too slow | `timeout server` (60s) | **504** |
+| WebSocket active | `timeout tunnel` (24h) | overrides client+server |
+
+Without that limit a request hangs for up to **10 minutes** — that is how long
+NocoDB's internal `acquireConnectionTimeout` waits for a free DB connection
+before giving up.
+
+#### What limits throughput — and what does NOT
+
+> These figures come from a load test (Docker Desktop, 8 cores, many small
+> single-record inserts via the record API). The absolute numbers do not carry
+> over 1:1 to a 24-core server, but the **ratios** do.
+
+Under load, **NocoDB sits at ~105 % CPU** (one core fully saturated),
+**PostgreSQL at ~11 %**. The bottleneck is the single JavaScript thread that
+parses, authenticates, validates and serializes every request — not the database
+and not the connection pool.
+
+What that means for what actually helps:
+
+| Measure | Measured effect |
+|---------|-----------------|
+| `NC_DB_POOL_MAX` 10 → 80 (single instance) | **+9 %** — the pool was never the bottleneck |
+| PostgreSQL `synchronous_commit=off` / `commit_delay` | **0 % / negative** — the DB is not the bottleneck |
+| **More instances** (more JS threads) | **the real lever** — the only way to use more cores |
+| **Bulk inserts** (arrays instead of single records) | **~11×** — if the API client can send them |
+
+**Consequence:** the pool fix and PG tuning do **not** solve a throughput problem
+caused by many small single requests. Only two things help — more instances (this
+cluster) and, where the client allows it, batching many records into one request
+(`POST /api/v2/tables/{tableId}/records` with an array). The HAProxy `maxconn`
+solves a *different* problem: not throughput, but the overload avalanche (the
+original 504 symptom).
+
+For insert-heavy workloads a higher `NC_DB_POOL_MAX_CLUSTER` (e.g. 20–25) can
+raise throughput by keeping more records in flight — **measure against your own
+load**; the JS thread stays the hard ceiling.
+
+**Prerequisites:**
+
+- Everything from Traefik mode (external network, DNS, cert resolver)
+- Host resources matching the chosen scaling tier (see table below):
+  **16 GB / 16 cores** for tier S up to **32 GB / 24 cores** for tier L
+- `NC_AUTH_JWT_SECRET` set and identical across **all** instances — otherwise
+  instance B rejects tokens issued by instance A
+
+> **`NC_CONNECTION_ENCRYPT_KEY` is deliberately left unset.** External data
+> source credentials therefore stay unencrypted in the database — same as
+> before. Enabling it is **irreversible** and must be done with *exactly one*
+> running instance, because instances starting in parallel destroy the
+> credentials through double encryption. See `.env.example` for the procedure.
+
+**Scaling tiers.** Instance count is controlled by Compose profiles — either in
+`.env` (`COMPOSE_PROFILES=`) or via `--profile` on the command line. The whole
+stack is capped by a resource budget; every container has limits, not just the
+NocoDB instances:
+
+| Tier | `COMPOSE_PROFILES` | Instances | Budget | Sum of limits |
+|------|--------------------|-----------|--------|---------------|
+| **S** | *(empty)* | 4 | 16 GB / 16 cores | 15.0 cores / 15.21 GB |
+| **M** | `scale6` | 6 | 24 GB / 20 cores | 20.0 cores / 21.00 GB |
+| **L** | `scale8` | 8 | 32 GB / 24 cores | 23.0 cores / 30.00 GB |
+
+**Important:** the profile only changes the *number* of instances. The matching
+limits for PostgreSQL, Redis and HAProxy have to fit the tier — `.env.example`
+carries a complete, copy-pasteable block per tier plus a table of which values
+must be changed together.
+
+Verify:
+
+```bash
+docker compose -f docker-compose.cluster.yml config | grep -E "cpus:|memory:"
+```
+
+Why not more instances: PostgreSQL degrades beyond roughly 2–4× CPU cores of
+*active* connections. At 24 cores the sweet spot is 50–100 — already reached by
+8 instances × pool 10. A larger pool per instance makes the database slower, not
+faster.
+
+**Testing locally:**
+
+```bash
+docker compose -f docker-compose.cluster-development.yml up -d --build
+# Access: http://localhost:${EXPOSED_APP_PORT}
+```
+
+Two instances are enough to exercise everything that differs in cluster
+operation: migration gate, Redis cache coherence, socket.io fan-out and sticky
+sessions.
+
+**HAProxy stats page** (reachable only inside the container, deliberately not
+from the Docker network):
+
+```bash
+docker exec -it ${STACK_NAME}_LB wget -qO- http://127.0.0.1:8404/stats
+```
+
+Under load, `qcur`/`qmax` > 0 there is **not** a warning sign but the proof that
+the queue is working and overload is being absorbed in front of the database.
 
 ### Backup Sidecar
 
@@ -913,8 +1214,19 @@ These settings are preconfigured in all compose files:
 | Setting | Value | Description |
 |---------|-------|-------------|
 | `NC_DISABLE_TELE` | `true` | Telemetry disabled |
+| `NC_DISABLE_ERR_REPORTS` | `true` | Error reporting disabled (separate switch, **not** covered by `NC_DISABLE_TELE`) |
+| `NC_DISABLE_SUPPORT_CHAT` | `true` | Third-party chat widget disabled |
 | `NC_DISABLE_AUDIT` | `true` | Audit logging disabled |
-| `NC_INVITE_ONLY_SIGNUP` | `true` | Invite-only registration |
+
+> **Invite-only registration is not an environment variable.**
+> Earlier versions of this stack set `NC_INVITE_ONLY_SIGNUP=true`. That variable
+> does not exist in NocoDB and was never read — registration was **open**
+> despite the setting.
+>
+> The actual switch is the `invite_only_signup` flag in the `nc_store` table,
+> defaulting to `false`. It can only be set through the **super-admin UI**
+> (Account Settings) or the app-settings API. Verify it after every fresh
+> installation.
 
 #### Optional Settings
 
