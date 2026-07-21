@@ -1,3 +1,13 @@
+## [0.8.0](https://github.com/bauer-group/CS-NocoDB/compare/v0.7.4...v0.8.0) (2026-07-21)
+
+### 🚀 Features
+
+* **cluster:** added HAProxy multi-instance stack and fixed dead config ([c762b3d](https://github.com/bauer-group/CS-NocoDB/commit/c762b3db1d57ee39def9d941181606145aeefbe7))
+
+### 🐛 Bug Fixes
+
+* **ci:** added the missing permissions block ([a6be0ad](https://github.com/bauer-group/CS-NocoDB/commit/a6be0ad21b18d036985f533695cf41663046ff8e))
+
 ## [0.7.4](https://github.com/bauer-group/CS-NocoDB/compare/v0.7.3...v0.7.4) (2026-07-14)
 
 ## [0.7.3](https://github.com/bauer-group/CS-NocoDB/compare/v0.7.2...v0.7.3) (2026-07-09)
