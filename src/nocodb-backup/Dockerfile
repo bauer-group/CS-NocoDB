@@ -60,7 +60,7 @@ LABEL org.opencontainers.image.documentation="https://github.com/bauer-group/CS-
 LABEL org.opencontainers.image.description="NocoDB backup (PostgreSQL + data files + REST-API export) via the central BackupHelper engine - BAUER GROUP Edition"
 LABEL com.bauer-group.image.component="backup"
 LABEL com.bauer-group.image.stack="nocodb"
-LABEL org.opencontainers.image.version="0.7.4"
+LABEL org.opencontainers.image.version="0.8.0"
 
 # Drop back to the engine's non-root user; inherit ENTRYPOINT + HEALTHCHECK.
 USER backup
