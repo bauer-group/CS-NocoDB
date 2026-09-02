@@ -4,6 +4,8 @@ All notable changes to this project are documented here. This file is maintained
 automatically by [semantic-release](https://github.com/semantic-release/semantic-release)
 on every release to `main`.
 
+## [0.8.6](https://github.com/bauer-group/CS-NocoDB/compare/v0.8.5...v0.8.6) (2026-09-02)
+
 ## [0.8.5](https://github.com/bauer-group/CS-NocoDB/compare/v0.8.4...v0.8.5) (2026-09-01)
 
 ## [0.8.4](https://github.com/bauer-group/CS-NocoDB/compare/v0.8.3...v0.8.4) (2026-08-20)
