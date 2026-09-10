@@ -4,6 +4,15 @@ All notable changes to this project are documented here. This file is maintained
 automatically by [semantic-release](https://github.com/semantic-release/semantic-release)
 on every release to `main`.
 
+## [0.8.8](https://github.com/bauer-group/CS-NocoDB/compare/v0.8.7...v0.8.8) (2026-09-10)
+
+### 🔧 Maintenance
+
+* **deps:** update base image nocodb ([656c3ae](https://github.com/bauer-group/CS-NocoDB/commit/656c3ae101f228530b26bc30d7a8e7cf89d3102a))
+* update Dockerfile version to 0.8.7 ([b0481f4](https://github.com/bauer-group/CS-NocoDB/commit/b0481f453fa29039715a5271f473b129cc529b10))
+* update Dockerfile version to 0.8.7 ([6fd724e](https://github.com/bauer-group/CS-NocoDB/commit/6fd724e31864818dcac31c8707f7837e87392dbf))
+* update Dockerfile version to 0.8.7 ([f9ab2a3](https://github.com/bauer-group/CS-NocoDB/commit/f9ab2a3c941b01df498ada2050a78b940fc27aae))
+
 ## [0.8.7](https://github.com/bauer-group/CS-NocoDB/compare/v0.8.6...v0.8.7) (2026-09-03)
 
 ### 🔧 Maintenance
