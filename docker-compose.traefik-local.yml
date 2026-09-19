@@ -46,6 +46,14 @@ services:
       # HTTP spricht. Ein http-Default wuerde dort Mixed-Content erzeugen.
       - NC_SITE_URL=${NC_SITE_URL:?Browser-URL inkl. Schema in .env setzen, z.B. https://db.example.com - siehe .env.example}
 
+      # Proxy-Vertrauen (seit NocoDB 2026.08.1 per Default AUS). 1 = genau ein
+      # Hop (Traefik): NocoDB nimmt den rechtesten X-Forwarded-For-Eintrag als
+      # Client-IP. Spoofing-sicher, weil Traefik fremde X-Forwarded-* verwirft.
+      # Steht ein weiterer Proxy (nginx) davor, sieht Traefik nur dessen IP.
+      # Echte Client-IPs erst, wenn Traefik ihm vertraut
+      # (entryPoints.web.forwardedHeaders.trustedIPs) - dann hier 2.
+      - NC_TRUST_PROXY=${NC_TRUST_PROXY:-1}
+
       # Telemetry & Error-Reporting (zwei getrennte Schalter!)
       # NC_DISABLE_ERR_REPORTS mit Plural-S - die Singular-Form existiert nicht.
       - NC_DISABLE_TELE=true

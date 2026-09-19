@@ -560,6 +560,7 @@ Diese Einstellungen sind in allen Compose-Files vorkonfiguriert:
 | `NC_DISABLE_ERR_REPORTS` | `true` | Error-Reporting deaktiviert (eigener Schalter, **nicht** von `NC_DISABLE_TELE` abgedeckt) |
 | `NC_DISABLE_SUPPORT_CHAT` | `true` | Drittanbieter-Chat-Widget deaktiviert |
 | `NC_DISABLE_AUDIT` | `true` | Audit-Logging deaktiviert |
+| `NC_TRUST_PROXY` | `1` (Traefik-/Cluster-Modi), `false` (local, development) | Vertrauen in `X-Forwarded-*` für korrekte Client-IP und korrektes Protokoll. Seit NocoDB 2026.08.1 sonst aus. Details in `.env.example` |
 
 > **Registrierung nur per Einladung ist keine Umgebungsvariable.**
 > Frühere Versionen dieses Stacks setzten `NC_INVITE_ONLY_SIGNUP=true`. Diese
@@ -1229,6 +1230,7 @@ These settings are preconfigured in all compose files:
 | `NC_DISABLE_ERR_REPORTS` | `true` | Error reporting disabled (separate switch, **not** covered by `NC_DISABLE_TELE`) |
 | `NC_DISABLE_SUPPORT_CHAT` | `true` | Third-party chat widget disabled |
 | `NC_DISABLE_AUDIT` | `true` | Audit logging disabled |
+| `NC_TRUST_PROXY` | `1` (Traefik/cluster modes), `false` (local, development) | Trust `X-Forwarded-*` for correct client IP and protocol. Off by default since NocoDB 2026.08.1. Details in `.env.example` |
 
 > **Invite-only registration is not an environment variable.**
 > Earlier versions of this stack set `NC_INVITE_ONLY_SIGNUP=true`. That variable

@@ -54,6 +54,12 @@ services:
       # vom selben Rechner - sonst in .env die Browser-URL setzen.
       - NC_SITE_URL=${NC_SITE_URL:-http://localhost:${EXPOSED_APP_PORT:-8080}}
 
+      # Proxy-Vertrauen bewusst AUS: der NocoDB-Port ist direkt veroeffentlicht,
+      # jeder Client koennte sonst X-Forwarded-For/-Proto faelschen. Mit eigenem
+      # Reverse Proxy davor: Port an 127.0.0.1 binden, NC_TRUST_PROXY=1 und
+      # NC_SITE_URL auf die oeffentliche URL des Proxys setzen.
+      - NC_TRUST_PROXY=${NC_TRUST_PROXY:-false}
+
       # Telemetry & Error-Reporting (zwei getrennte Schalter!)
       # NC_DISABLE_ERR_REPORTS mit Plural-S - die Singular-Form existiert nicht.
       - NC_DISABLE_TELE=true

@@ -96,6 +96,13 @@ x-nocodb: &nocodb
     # in .env die Browser-URL setzen.
     - NC_SITE_URL=${NC_SITE_URL:-http://localhost:${EXPOSED_APP_PORT:-8080}}
 
+    # Proxy-Vertrauen (seit NocoDB 2026.08.1 per Default AUS). 1 = ein Hop:
+    # HAProxy haengt bewusst KEINEN eigenen X-Forwarded-For-Eintrag an (siehe
+    # fe_nocodb), der rechteste Eintrag ist damit der Client, den der Edge sah.
+    # Dev: HAProxy ist hier auf dem Host veroeffentlicht - Clients aus privaten
+    # Netzen gelten als trusted_edge und koennen X-Forwarded-For setzen.
+    - NC_TRUST_PROXY=${NC_TRUST_PROXY:-1}
+
     # Redis: Cache + Bull-Job-Queue + PubSub + socket.io-Adapter.
     # ZWINGEND fuer den Mehr-Instanz-Betrieb.
     - NC_REDIS_URL=redis://redis-server:6379
@@ -737,16 +744,16 @@ configs:
 
           # Hinter vertrauenswuerdigem Edge: dessen XFF unveraendert lassen und KEINEN
           # Hop addieren, damit NocoDB in beiden Topologien dieselbe Hop-Form sieht.
-          # Bewusst NICHT "option forwardfor" - das haengt laut Handbuch immer an und
-          # liesse einen client-gelieferten XFF an linkester Position stehen. NocoDB
-          # hardcodiert Express "trust proxy = true" und liest genau diese Position.
+          # Bewusst NICHT "option forwardfor" - das haengt laut Handbuch immer einen
+          # Eintrag an. NocoDB liest mit NC_TRUST_PROXY=1 den RECHTESTEN Eintrag;
+          # ein zusaetzlicher HAProxy-Hop machte daraus die Traefik-IP.
           http-request set-header X-Forwarded-For %[src] if trusted_edge !{ req.hdr(X-Forwarded-For) -m found }
           http-request set-header X-Real-IP %[req.hdr_ip(X-Forwarded-For,1)] if trusted_edge !{ req.hdr(X-Real-IP) -m found }
 
-          # Alternative Client-IP-Header entfernen. NocoDB ermittelt die Client-IP an
-          # ZWEI Stellen: req.ip (Express, Audit-Log) und req.clientIp (Middleware
-          # "request-ip", Import-Provenienz). Letztere ignoriert "trust proxy" und
-          # prueft X-Client-IP VOR X-Forwarded-For - XFF allein reicht also nicht.
+          # Alternative Client-IP-Header entfernen. Seit NocoDB 2026.08.1 gilt
+          # req.clientIp = req.ip (trust-proxy-aware); aeltere Images nutzten die
+          # Middleware "request-ip", die X-Client-IP VOR X-Forwarded-For prueft.
+          # Bleibt als Defense-in-Depth fuer Image-Rollbacks und Downstream-Tools.
           http-request del-header X-Client-IP
           http-request del-header CF-Connecting-IP
           http-request del-header True-Client-IP

@@ -42,6 +42,17 @@ services:
       # einen vorgeschalteten Proxy tote Links erzeugen.
       - NC_SITE_URL=${NC_SITE_URL:?Browser-URL inkl. Schema in .env setzen, z.B. http://192.168.1.100:8080 - siehe .env.example}
 
+      # Proxy-Vertrauen bewusst AUS: der NocoDB-Port ist direkt veroeffentlicht,
+      # jeder Client koennte sonst X-Forwarded-For/-Proto faelschen.
+      #
+      # Steht ein eigener Reverse Proxy davor (nginx, Caddy, ...), gilt:
+      #   1. Port nur lokal binden: EXPOSED_APP_PORT=127.0.0.1:8080 - sonst
+      #      bleibt NocoDB am Proxy vorbei erreichbar und die IP faelschbar
+      #   2. NC_TRUST_PROXY=1 in der .env (ein Hop = der Proxy)
+      #   3. NC_SITE_URL auf die oeffentliche URL des Proxys setzen, bei TLS
+      #      also https:// - davon haengen die Attachment-Links ab
+      - NC_TRUST_PROXY=${NC_TRUST_PROXY:-false}
+
       # Telemetry & Error-Reporting (zwei getrennte Schalter!)
       # NC_DISABLE_ERR_REPORTS mit Plural-S - die Singular-Form existiert nicht.
       - NC_DISABLE_TELE=true

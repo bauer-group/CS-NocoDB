@@ -38,6 +38,12 @@ services:
       - NC_APP_DATA_DIR=/usr/app/data
       - NC_SITE_URL=${NC_SITE_URL:-https://${SERVICE_HOSTNAME}}
 
+      # Proxy-Vertrauen (seit NocoDB 2026.08.1 per Default AUS). 1 = genau ein
+      # Hop (Traefik): NocoDB nimmt den rechtesten X-Forwarded-For-Eintrag als
+      # Client-IP und X-Forwarded-Proto als Protokoll. Spoofing-sicher, weil
+      # Traefik client-gelieferte X-Forwarded-*-Header verwirft.
+      - NC_TRUST_PROXY=${NC_TRUST_PROXY:-1}
+
       # Telemetry & Error-Reporting (zwei getrennte Schalter!)
       # NC_DISABLE_ERR_REPORTS mit Plural-S - die Singular-Form existiert nicht.
       - NC_DISABLE_TELE=true
