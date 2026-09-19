@@ -4,6 +4,27 @@ All notable changes to this project are documented here. This file is maintained
 automatically by [semantic-release](https://github.com/semantic-release/semantic-release)
 on every release to `main`.
 
+## [1.0.0](https://github.com/bauer-group/CS-NocoDB/compare/v0.8.10...v1.0.0) (2026-09-19)
+
+### ⚠ BREAKING CHANGES
+
+* **compose:** local and traefik-local deployments must set
+  NC_SITE_URL in .env before the next "docker compose up -d". The
+  value is the URL as the browser calls it, including the scheme -
+  https when a TLS-terminating proxy sits in front, even though the
+  stack itself speaks plain HTTP.
+
+### 🐛 Bug Fixes
+
+* **compose:** added NC_TRUST_PROXY to all deployment modes ([5dceefa](https://github.com/bauer-group/CS-NocoDB/commit/5dceefac6438b6a813fbcb82dd63a07c0de66d11))
+* **compose:** made NC_SITE_URL mandatory in local and traefik-local ([4b5f6d3](https://github.com/bauer-group/CS-NocoDB/commit/4b5f6d33c7446b87b725940dab8ae1d902769f47))
+
+### 🔧 Maintenance
+
+* update Dockerfile version to 0.8.10 ([f4e3c7d](https://github.com/bauer-group/CS-NocoDB/commit/f4e3c7de0076656555b9266be523790456fc5fdf))
+* update Dockerfile version to 0.8.10 ([ba13d7d](https://github.com/bauer-group/CS-NocoDB/commit/ba13d7d84535b3cf851ebae96cd03cad6444b32f))
+* update Dockerfile version to 0.8.10 ([fbb6279](https://github.com/bauer-group/CS-NocoDB/commit/fbb6279ce66532fc60bc17d05c03e1b66b2bc09e))
+
 ## [0.8.10](https://github.com/bauer-group/CS-NocoDB/compare/v0.8.9...v0.8.10) (2026-09-19)
 
 ### 🔧 Maintenance
