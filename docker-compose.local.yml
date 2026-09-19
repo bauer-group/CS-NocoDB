@@ -35,7 +35,12 @@ services:
       - TZ=${TIME_ZONE:-Etc/UTC}
       - NC_DB=pg://database-server:5432?u=nocodb&p=${DATABASE_PASSWORD}&d=nocodb
       - NC_APP_DATA_DIR=/usr/app/data
-      - NC_SITE_URL=${NC_SITE_URL:-http://localhost:${EXPOSED_APP_PORT:-8080}}
+
+      # NC_SITE_URL ist Pflicht: Basis aller Attachment-Links (dltemp/...) und
+      # Mail-Links. Muss die URL sein, die der BROWSER sieht. Ein localhost-
+      # Default wuerde fuer jeden Zugriff ueber http://<host-ip>:PORT oder
+      # einen vorgeschalteten Proxy tote Links erzeugen.
+      - NC_SITE_URL=${NC_SITE_URL:?Browser-URL inkl. Schema in .env setzen, z.B. http://192.168.1.100:8080 - siehe .env.example}
 
       # Telemetry & Error-Reporting (zwei getrennte Schalter!)
       # NC_DISABLE_ERR_REPORTS mit Plural-S - die Singular-Form existiert nicht.

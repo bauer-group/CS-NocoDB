@@ -65,6 +65,7 @@ open http://localhost:8080
 Direkter Zugriff über Port - ideal für Entwicklung:
 
 ```bash
+# In .env Pflicht: NC_SITE_URL=http://<host-oder-ip>:${EXPOSED_APP_PORT}
 docker compose -f docker-compose.local.yml up -d
 # Zugriff: http://localhost:${EXPOSED_APP_PORT}
 ```
@@ -88,9 +89,13 @@ docker compose -f docker-compose.traefik.yml up -d
 HTTP-Zugriff nur von bestimmten IP-Bereichen - ideal für interne Netzwerke:
 
 ```bash
+# In .env Pflicht: NC_SITE_URL=http://${SERVICE_HOSTNAME}
+#   (hinter TLS-Proxy wie nginx: https://${SERVICE_HOSTNAME})
 docker compose -f docker-compose.traefik-local.yml up -d
 # Zugriff: http://${SERVICE_HOSTNAME} (nur von IPs in IP_WHITELIST)
 ```
+
+> **Hinter einem TLS-Proxy** muss `NC_SITE_URL` mit `https://` beginnen, obwohl Traefik hier nur HTTP spricht. Sonst erzeugt NocoDB `http://`-Attachment-Links, die der Browser als Mixed Content blockiert.
 
 #### Traefik Header Auth
 
@@ -299,6 +304,7 @@ Siehe [docs/BACKUP.md](docs/BACKUP.md) für die vollstaendige Dokumentation.
 | `STACK_NAME` | Eindeutiger Stack-Name | `db_crm_app_domain_com` |
 | `DATABASE_PASSWORD` | PostgreSQL Passwort | `openssl rand -base64 16` |
 | `TIME_ZONE` | Zeitzone | `Europe/Berlin` |
+| `NC_SITE_URL` | Öffentliche URL, wie der Browser sie aufruft (Basis für Attachment- und Mail-Links). **Pflicht** für `local` und `traefik-local` | `https://db.example.com` |
 
 #### Traefik-Konfiguration
 
@@ -745,6 +751,7 @@ open http://localhost:8080
 Direct port access - ideal for development:
 
 ```bash
+# Required in .env: NC_SITE_URL=http://<host-or-ip>:${EXPOSED_APP_PORT}
 docker compose -f docker-compose.local.yml up -d
 # Access: http://localhost:${EXPOSED_APP_PORT}
 ```
@@ -768,9 +775,13 @@ docker compose -f docker-compose.traefik.yml up -d
 HTTP access only from specific IP ranges - ideal for internal networks:
 
 ```bash
+# Required in .env: NC_SITE_URL=http://${SERVICE_HOSTNAME}
+#   (behind a TLS proxy such as nginx: https://${SERVICE_HOSTNAME})
 docker compose -f docker-compose.traefik-local.yml up -d
 # Access: http://${SERVICE_HOSTNAME} (only from IPs in IP_WHITELIST)
 ```
+
+> **Behind a TLS proxy**, `NC_SITE_URL` must start with `https://` even though Traefik only speaks HTTP here. Otherwise NocoDB generates `http://` attachment links that browsers block as mixed content.
 
 #### Traefik Header Auth
 
@@ -967,6 +978,7 @@ See [docs/BACKUP.md](docs/BACKUP.md) for full documentation.
 | `STACK_NAME` | Unique stack name | `db_crm_app_domain_com` |
 | `DATABASE_PASSWORD` | PostgreSQL password | `openssl rand -base64 16` |
 | `TIME_ZONE` | Timezone | `Europe/Berlin` |
+| `NC_SITE_URL` | Public URL as the browser sees it (base for attachment and mail links). **Required** for `local` and `traefik-local` | `https://db.example.com` |
 
 #### Traefik Configuration
 

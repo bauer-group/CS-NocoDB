@@ -91,7 +91,9 @@ x-nocodb: &nocodb
     - NC_APP_DATA_DIR=/usr/app/data
 
     # NC_SITE_URL bestimmt auch den socket.io-Namespace und MUSS deshalb auf
-    # allen Instanzen identisch sein.
+    # allen Instanzen identisch sein. Zugleich Basis aller Attachment- und
+    # Mail-Links: Default passt nur fuer Zugriff vom selben Rechner - sonst
+    # in .env die Browser-URL setzen.
     - NC_SITE_URL=${NC_SITE_URL:-http://localhost:${EXPOSED_APP_PORT:-8080}}
 
     # Redis: Cache + Bull-Job-Queue + PubSub + socket.io-Adapter.

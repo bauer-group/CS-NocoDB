@@ -39,7 +39,12 @@ services:
       - TZ=${TIME_ZONE:-Etc/UTC}
       - NC_DB=pg://database-server:5432?u=nocodb&p=${DATABASE_PASSWORD}&d=nocodb
       - NC_APP_DATA_DIR=/usr/app/data
-      - NC_SITE_URL=${NC_SITE_URL:-http://${SERVICE_HOSTNAME}}
+
+      # NC_SITE_URL ist Pflicht: Basis aller Attachment-Links (dltemp/...) und
+      # Mail-Links. Muss die URL sein, die der BROWSER sieht - steht ein
+      # TLS-terminierender Proxy davor, also https://, obwohl Traefik hier nur
+      # HTTP spricht. Ein http-Default wuerde dort Mixed-Content erzeugen.
+      - NC_SITE_URL=${NC_SITE_URL:?Browser-URL inkl. Schema in .env setzen, z.B. https://db.example.com - siehe .env.example}
 
       # Telemetry & Error-Reporting (zwei getrennte Schalter!)
       # NC_DISABLE_ERR_REPORTS mit Plural-S - die Singular-Form existiert nicht.
