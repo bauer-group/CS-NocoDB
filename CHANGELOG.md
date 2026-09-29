@@ -4,6 +4,16 @@ All notable changes to this project are documented here. This file is maintained
 automatically by [semantic-release](https://github.com/semantic-release/semantic-release)
 on every release to `main`.
 
+## [1.0.1](https://github.com/bauer-group/CS-NocoDB/compare/v1.0.0...v1.0.1) (2026-09-29)
+
+### 🔧 Maintenance
+
+* **ci:** removed issue AI summary workflow ([6e14167](https://github.com/bauer-group/CS-NocoDB/commit/6e14167d5b94d3a4b494fc8e3f061919334c08a9)), references [bauer-group/automation-templates#105](https://github.com/bauer-group/automation-templates/issues/105)
+* **deps:** update base image nocodb ([fef6490](https://github.com/bauer-group/CS-NocoDB/commit/fef6490123a5d091c899ab25c7945987ecaacbf7))
+* update Dockerfile version to 1.0.0 ([e63137b](https://github.com/bauer-group/CS-NocoDB/commit/e63137b9b1eb0d326d08a6ef43c919d51ec73be1))
+* update Dockerfile version to 1.0.0 ([ca4c3f0](https://github.com/bauer-group/CS-NocoDB/commit/ca4c3f076e935c50fdf3b6cedacdadfa03270253))
+* update Dockerfile version to 1.0.0 ([bea5dcf](https://github.com/bauer-group/CS-NocoDB/commit/bea5dcf96fb85921e5b5d34c01e60ab19e35ea44))
+
 ## [1.0.0](https://github.com/bauer-group/CS-NocoDB/compare/v0.8.10...v1.0.0) (2026-09-19)
 
 ### ⚠ BREAKING CHANGES
