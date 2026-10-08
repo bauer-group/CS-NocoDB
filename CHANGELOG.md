@@ -4,6 +4,23 @@ All notable changes to this project are documented here. This file is maintained
 automatically by [semantic-release](https://github.com/semantic-release/semantic-release)
 on every release to `main`.
 
+## [1.0.5](https://github.com/bauer-group/CS-NocoDB/compare/v1.0.4...v1.0.5) (2026-10-08)
+
+### 🐛 Bug Fixes
+
+* **backup:** exported attachments stored by the Local adapter ([041f5ec](https://github.com/bauer-group/CS-NocoDB/commit/041f5ec68977f34b3d7047dc912ce6a4215c99d6))
+* **backup:** gave the alert mail its own STARTTLS port and switch ([7ab4ec0](https://github.com/bauer-group/CS-NocoDB/commit/7ab4ec0e596e334564fd2fb27d4cf24e8bdb98f8))
+* **backup:** ran the sidecar as root to restore the data volume ([65797eb](https://github.com/bauer-group/CS-NocoDB/commit/65797ebe780c931aefe59022a0d0e2a6c6100754))
+* **backup:** reported failed REST requests instead of hiding them ([f2416c9](https://github.com/bauer-group/CS-NocoDB/commit/f2416c9dc39f58b18f8e99ce48b72a8d99bcd0f9))
+* **backup:** sent the NocoDB API token only to NocoDB itself ([7069e50](https://github.com/bauer-group/CS-NocoDB/commit/7069e50005da606dbe8fa2c199da7d97acb9d80e))
+* **backup:** switched the database dump to the custom format ([6e4e0d2](https://github.com/bauer-group/CS-NocoDB/commit/6e4e0d2c651c8a1abc566f5f65009d19029d7adc))
+
+### 🔧 Maintenance
+
+* update Dockerfile version to 1.0.4 ([e8ed27c](https://github.com/bauer-group/CS-NocoDB/commit/e8ed27c46be1c65525a5549722baf88fcc1c7e33))
+* update Dockerfile version to 1.0.4 ([bc0091a](https://github.com/bauer-group/CS-NocoDB/commit/bc0091a4cc26257af532d727dda6e9b2e92915d1))
+* update Dockerfile version to 1.0.4 ([f6bb8da](https://github.com/bauer-group/CS-NocoDB/commit/f6bb8da1af1d7b55a44173d6d17e5405c7300fe2))
+
 ## [1.0.4](https://github.com/bauer-group/CS-NocoDB/compare/v1.0.3...v1.0.4) (2026-10-07)
 
 ### 🔧 Maintenance
