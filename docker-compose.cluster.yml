@@ -571,7 +571,6 @@ services:
     user: "0:0"
     cap_drop: [ALL]
     cap_add: [DAC_OVERRIDE, FOWNER]
-    security_opt: ["no-new-privileges:true"]
     restart: unless-stopped
     logging:
       driver: json-file
