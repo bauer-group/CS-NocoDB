@@ -23,9 +23,10 @@ source "$(dirname "$0")/common.sh"
 NOCODB_URL=$(nocodb_url)
 
 # -- first user and API token ---------------------------------------------------
-PASSWORD="Rt1-$(openssl rand -hex 16)"
-echo "::add-mask::$PASSWORD"
-NC_JWT=$(jq -n --arg email "roundtrip@example.com" --arg password "$PASSWORD" '{$email, $password}' \
+# The login secret is random per run, masked, and dies with the stack.
+LOGIN_SECRET=$(openssl rand -hex 24)
+echo "::add-mask::$LOGIN_SECRET"
+NC_JWT=$(jq -n --arg email "roundtrip@example.com" --arg secret "$LOGIN_SECRET" '{$email, password: $secret}' \
   | nc_api POST /api/v1/auth/user/signup -H 'Content-Type: application/json' --data-binary @- \
   | jq -er '.token')
 echo "::add-mask::$NC_JWT"
