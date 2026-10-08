@@ -162,3 +162,46 @@ def test_download_follows_a_bounded_number_of_redirects(tmp_path, monkeypatch):
     client = httpx.Client(base_url=src.api_url, transport=httpx.MockTransport(loop))
     assert src._download_file(client, "/loop", tmp_path / "x") is False
     assert not (tmp_path / "x").exists()
+
+
+def test_rejected_token_fails_the_component(tmp_path, monkeypatch):
+    # An expired or revoked token used to produce an export with zero bases and
+    # no error - a backup that looked fine and held nothing.
+    src = NocoDBRestSource({"type": "nocodb-rest", "token": "revoked", "api_url": "http://nocodb:8080"})
+    monkeypatch.setattr(src, "_client", lambda: httpx.Client(
+        base_url=src.api_url, transport=httpx.MockTransport(lambda r: httpx.Response(401, json={"msg": "Invalid token"}))))
+
+    [comp] = src.produce(tmp_path)
+    assert comp.path is None
+    assert "HTTP 401" in comp.error
+
+
+def test_partial_export_reports_warnings(tmp_path, monkeypatch):
+    # A failing records page or attachment download keeps the rest of the
+    # export, but the gap is reported (engine: job degrades to warning, alert).
+    src = NocoDBRestSource({"type": "nocodb-rest", "token": "t", "api_url": "http://nocodb:8080"})
+    routes = {
+        "/api/v2/meta/bases": {"list": [{"id": "b1", "title": "Base A"}]},
+        "/api/v2/meta/bases/b1/tables": {"list": [{"id": "t1", "title": "Tbl"}]},
+        "/api/v2/meta/tables/t1": {"id": "t1", "title": "Tbl", "columns": [{"title": "Files", "uidt": "Attachment"}]},
+        "/api/v2/tables/t1/records?offset=0": {
+            "list": [{"Id": 1, "Files": [{"path": "download/gone.txt", "title": "gone.txt"}]}],
+            "pageInfo": {"totalRows": 2}},
+        # offset=1 is missing: the second page fails with 404
+    }
+    monkeypatch.setattr(src, "_client", lambda: _mock_client(src, routes))
+
+    [comp] = src.produce(tmp_path)
+    assert comp.error is None and comp.path is not None
+    assert comp.metadata["records"] == 1
+    warnings = comp.metadata["warnings"]
+    assert any("Base A/Tbl: records incomplete" in w and "HTTP 404" in w for w in warnings)
+    assert any("Base A/Tbl: attachment gone.txt not downloaded" in w for w in warnings)
+
+
+def test_complete_export_has_no_warnings_key(tmp_path, monkeypatch):
+    src = NocoDBRestSource({"type": "nocodb-rest", "token": "t", "api_url": "http://nocodb:8080"})
+    routes = {"/api/v2/meta/bases": {"list": []}}
+    monkeypatch.setattr(src, "_client", lambda: _mock_client(src, routes))
+    [comp] = src.produce(tmp_path)
+    assert "warnings" not in comp.metadata

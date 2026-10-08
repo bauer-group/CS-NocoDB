@@ -30,6 +30,13 @@ Config (in `BACKUP_CONFIG_JSON`, secrets via `${VAR}`):
 Skips cleanly (no component) when `enabled` is false or the token is empty — so
 `BACKUP_API_EXPORT=false` is just an unset token.
 
+A token NocoDB rejects fails the component (the base list is the root of the
+export). A failed table list, schema, records page or attachment download keeps
+the rest of the export and is reported in `metadata.warnings`, so the engine
+degrades the job to warning and alerts. Attachments are fetched through their
+signed link where NocoDB provides one; the API token is only ever sent to
+`api_url`, never to an object-storage host or a redirect target elsewhere.
+
 ### 2. `nocodb` restore command group
 
 Mounted under the engine CLI as `backuphelper nocodb …`:
