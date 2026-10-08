@@ -174,6 +174,12 @@ NOCODB_BACKUP_SCHEDULE_MODE=interval
 NOCODB_BACKUP_SCHEDULE_INTERVAL_HOURS=24
 ```
 
+**Seltener als taeglich:** Der [Healthcheck](#healthcheck) des Backup-Containers erwartet
+mindestens alle 26 Stunden einen Lauf (`BACKUP_HEALTHCHECK_MAX_AGE_HOURS`, Default des
+Images; die Compose-Dateien reichen ihn nicht durch). Liegen die Laeufe weiter auseinander
+(einzelne Wochentage, ein Intervall ueber 26 Stunden), ist der Container 26 Stunden nach
+jedem Lauf bis zum naechsten `unhealthy`.
+
 #### Backup-Komponenten
 
 | Variable | Default | Beschreibung |
@@ -222,6 +228,20 @@ NOCODB_BACKUP_TEAMS_WEBHOOK=https://outlook.office.com/webhook/...
 # Generischer Webhook
 NOCODB_BACKUP_WEBHOOK_URL=https://your-webhook.example.com
 ```
+
+Jeder Lauf endet in einem von drei Status. Der Status bestimmt Exit-Code, Alert und
+[Healthcheck](#healthcheck):
+
+| Status | Wann | `--now` | Alert bei Level |
+|--------|------|---------|-----------------|
+| `success` | Alle Komponenten gesichert, Snapshot gespeichert | Exit 0 | `all` |
+| `warning` | Alle Komponenten gesichert, aber etwas Nicht-Fatales schlug fehl, z. B. der S3-Upload bei vorhandener lokaler Kopie oder einzelne Tabellen, Seiten oder Attachments im REST-Export | Exit 0 | `warnings` (Default), `all` |
+| `error` | Eine Komponente schlug komplett fehl (z. B. `pg_dump` oder ein von NocoDB abgelehntes `NOCODB_API_TOKEN`), der Snapshot landete auf keinem Ziel, oder der Lauf brach ab | Exit 1 | `errors`, `warnings`, `all` |
+
+Bis BackupHelper 1.7.6 endete ein Lauf mit fehlgeschlagener Komponente nur in `warning`
+(Exit 0), solange eine andere Komponente gelang. Abgeschaltete Komponenten (`NOCODB_BACKUP_DATABASE_DUMP`,
+`NOCODB_BACKUP_INCLUDE_FILES` oder `NOCODB_BACKUP_API_EXPORT` auf `false`) und ein leeres
+`NOCODB_API_TOKEN` erzeugen keine Komponente und beeinflussen den Status nicht.
 
 ### CLI-Befehle
 
@@ -293,6 +313,11 @@ docker exec ${STACK_NAME}_BACKUP backuphelper show 2024-02-05_05-15-00
 `show` gibt das Manifest als JSON aus: je Komponente (`database`, `nocodb-data`,
 `nocodb`) Name, Art, Groesse, sha256 und einen eventuellen Fehler. `verify <id>`
 prueft die Pruefsumme des Archivs (`OK <id>`).
+
+Ab BackupHelper 1.7.7 enthaelt das Manifest zusaetzlich `status` (`success`, `warning`
+oder `error`) fuer den Inhalt des Snapshots. Ein Snapshot mit fehlgeschlagener Komponente
+wird trotzdem gespeichert: Die Komponente steht mit Groesse 0 und ihrem Fehler im
+Manifest, die uebrigen lassen sich mit `restore <id> --only <name>` wiederherstellen.
 
 #### Datenbank wiederherstellen
 
@@ -604,10 +629,39 @@ docker logs -f ${STACK_NAME}_BACKUP
 
 #### Healthcheck
 
+Der Healthcheck des Backup-Containers (`backuphelper healthcheck` aus der
+BackupHelper-Engine) meldet, ob Backups funktionieren, nicht nur, ob der Prozess laeuft.
+Ab BackupHelper 1.7.7 ist der Container `unhealthy`, wenn
+
+- `/data` fuer den Container nicht beschreibbar ist,
+- der letzte Lauf in `error` endete oder sein Snapshot eine fehlgeschlagene Komponente
+  hat - bis ein neuerer Lauf mit `success` oder `warning` endet,
+- der letzte Lauf vor mehr als 26 Stunden startete (siehe [Schedule-Modi](#schedule-modi)),
+  oder
+- noch kein Backup gelaufen ist und der Container vor mehr als 26 Stunden startete.
+
 ```bash
 # Backup-Container Health
 docker inspect ${STACK_NAME}_BACKUP --format='{{.State.Health.Status}}'
+
+# Urteil und Grund
+docker exec ${STACK_NAME}_BACKUP backuphelper healthcheck
+# unhealthy: the last backup failed: snapshot 2026-07-05_05-15-00 (job main) at 2026-07-05T05:15:00+00:00: failed component(s): nocodb
 ```
+
+- **Nach dem Upgrade auf 1.7.7** ist ein Deployment, dessen neuester Snapshot schon eine
+  fehlgeschlagene Komponente hat, sofort `unhealthy`, bis ein vollstaendiger Snapshot
+  existiert. Die Quelle reparieren (z. B. ein abgelaufenes `NOCODB_API_TOKEN`) oder
+  abschalten (siehe [Alerting](#alerting)).
+- **`NOCODB_BACKUP_KEEP_LOCAL_ARCHIVE=false`** wird ebenfalls ueberwacht: Der Container
+  protokolliert jeden Lauf unter `/data/.state/`, ein Job, der nicht mehr laeuft, wird
+  also auch ohne lokalen Snapshot nach 26 Stunden `unhealthy`.
+- **`NOCODB_BACKUP_ON_STARTUP=true`:** Schlaegt das Backup beim Start fehl, ist der
+  Container gleich danach `unhealthy`, und ein noch wartendes `docker compose up --wait`
+  schlaegt fehl.
+
+Alle Regeln:
+[BackupHelper-Deployment-Doku](https://github.com/bauer-group/CS-BackupHelper/blob/main/docs/deployment.md#the-functional-healthcheck).
 
 ### Troubleshooting
 
@@ -860,6 +914,12 @@ NOCODB_BACKUP_SCHEDULE_MODE=interval
 NOCODB_BACKUP_SCHEDULE_INTERVAL_HOURS=24
 ```
 
+**Less often than daily:** the backup container's [health check](#health-check) expects a
+run at least every 26 hours (`BACKUP_HEALTHCHECK_MAX_AGE_HOURS`, the image default; the
+compose files do not pass it through). With runs further apart (single weekdays, an
+interval above 26 hours) the container is `unhealthy` from 26 hours after each run until
+the next one.
+
 #### Backup Components
 
 | Variable | Default | Description |
@@ -908,6 +968,20 @@ NOCODB_BACKUP_TEAMS_WEBHOOK=https://outlook.office.com/webhook/...
 # Generic webhook
 NOCODB_BACKUP_WEBHOOK_URL=https://your-webhook.example.com
 ```
+
+Every run ends in one of three statuses. The status decides the exit code, the alert and
+the [health check](#health-check):
+
+| Status | When | `--now` | Alert at level |
+|--------|------|---------|----------------|
+| `success` | Every component backed up, snapshot stored | exit 0 | `all` |
+| `warning` | Every component backed up, but something non-fatal went wrong, e.g. the S3 upload while the local copy exists, or single tables, pages or attachments of the REST export | exit 0 | `warnings` (default), `all` |
+| `error` | A component failed completely (e.g. `pg_dump`, or a `NOCODB_API_TOKEN` that NocoDB rejects), the snapshot reached no destination, or the run aborted | exit 1 | `errors`, `warnings`, `all` |
+
+Up to BackupHelper 1.7.6 a run with a failed component only ended in `warning` (exit 0)
+as long as another component succeeded. Switched-off components (`NOCODB_BACKUP_DATABASE_DUMP`, `NOCODB_BACKUP_INCLUDE_FILES` or
+`NOCODB_BACKUP_API_EXPORT` set to `false`) and an empty `NOCODB_API_TOKEN` produce no
+component and do not affect the status.
 
 ### CLI Commands
 
@@ -978,6 +1052,11 @@ docker exec ${STACK_NAME}_BACKUP backuphelper show 2024-02-05_05-15-00
 `show` prints the manifest as JSON: per component (`database`, `nocodb-data`,
 `nocodb`) its name, kind, size, sha256 and an error, if any. `verify <id>` checks
 the archive checksum (`OK <id>`).
+
+Since BackupHelper 1.7.7 the manifest also holds `status` (`success`, `warning` or
+`error`) for the snapshot's content. A snapshot with a failed component is still stored:
+the component is listed with size 0 and its error, and the other components can be
+restored with `restore <id> --only <name>`.
 
 #### Restore Database
 
@@ -1288,10 +1367,38 @@ docker logs -f ${STACK_NAME}_BACKUP
 
 #### Health Check
 
+The backup container's health check (`backuphelper healthcheck`, from the BackupHelper
+engine) reports whether backups work, not only whether the process runs. Since
+BackupHelper 1.7.7 the container is `unhealthy` when
+
+- `/data` is not writable by the container,
+- the most recent run ended in `error` or its snapshot has a failed component - until a
+  newer run ends in `success` or `warning`,
+- the most recent run started more than 26 hours ago (see [Schedule Modes](#schedule-modes)),
+  or
+- no backup has run yet and the container started more than 26 hours ago.
+
 ```bash
 # Backup container health
 docker inspect ${STACK_NAME}_BACKUP --format='{{.State.Health.Status}}'
+
+# Verdict and reason
+docker exec ${STACK_NAME}_BACKUP backuphelper healthcheck
+# unhealthy: the last backup failed: snapshot 2026-07-05_05-15-00 (job main) at 2026-07-05T05:15:00+00:00: failed component(s): nocodb
 ```
+
+- **After the upgrade to 1.7.7** a deployment whose newest snapshot already has a failed
+  component is `unhealthy` right away, until a complete snapshot exists. Repair the source
+  (e.g. an expired `NOCODB_API_TOKEN`) or switch it off (see [Alerting](#alerting-1)).
+- **`NOCODB_BACKUP_KEEP_LOCAL_ARCHIVE=false`** is monitored as well: the container records
+  every run under `/data/.state/`, so a job that stops running turns `unhealthy` after
+  26 hours even without a local snapshot.
+- **`NOCODB_BACKUP_ON_STARTUP=true`:** if the backup at start fails, the container is
+  `unhealthy` right after it, and a `docker compose up --wait` that is still waiting
+  fails.
+
+All rules:
+[BackupHelper deployment guide](https://github.com/bauer-group/CS-BackupHelper/blob/main/docs/deployment.md#the-functional-healthcheck).
 
 ### Troubleshooting
 
