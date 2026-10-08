@@ -316,8 +316,9 @@ docker volume ls | grep nocodb
 # Archiv in das Volume entpacken
 sudo tar -xzf /tmp/migration/nocodb-data.tar.gz -C "$NOCODB_VOLUME"
 
-# Berechtigungen setzen (NocoDB laeuft als uid 1000)
-sudo chown -R 1000:1000 "$NOCODB_VOLUME"
+# Kein chown noetig: NocoDB laeuft als root (das offizielle Image setzt keinen
+# USER) und legt seine Dateien selbst root-eigen an - genau so entpackt sie
+# tar als root.
 ```
 
 > **Ueberspringen wenn** Attachments auf S3 liegen oder keine Datei-Uploads existieren.
@@ -497,7 +498,8 @@ Oder automatisch: `INIT_COLLATION_AUTO_FIX=true` in `.env` und Init-Container au
 
 1. **Lokaler Storage:** `nocodb-data.tar.gz` vergessen? In das Volume entpacken (Schritt 8).
 2. **S3-Storage:** `NC_S3_BUCKET_NAME` und S3-Credentials in `.env` pruefen.
-3. **Berechtigungen:** Volume-Owner muss `1000:1000` sein.
+3. **Berechtigungen:** NocoDB laeuft als root und liest jede Datei im Volume -
+   ein abweichender Owner erklaert fehlende Attachments nicht.
 
 ### Langsame Queries nach Migration
 

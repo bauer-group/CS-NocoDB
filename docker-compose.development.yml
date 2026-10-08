@@ -252,6 +252,15 @@ services:
       context: ./src/nocodb-backup
     container_name: ${STACK_NAME:-nocodb-dev}_BACKUP
     profiles: ["backup"]
+    # Root instead of the engine's uid 1000: nocodb-server runs as root and
+    # writes the data volume as root, so uid 1000 can back it up but cannot
+    # restore into it ("Permission denied"). Capabilities are cut down to what
+    # backup and restore need: DAC_OVERRIDE for the uid-1000 /data volume and
+    # files of other owners, FOWNER to set mode and times on restored files.
+    user: "0:0"
+    cap_drop: [ALL]
+    cap_add: [DAC_OVERRIDE, FOWNER]
+    security_opt: ["no-new-privileges:true"]
     restart: unless-stopped
     logging:
       driver: json-file
