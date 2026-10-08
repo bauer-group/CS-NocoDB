@@ -651,12 +651,49 @@ curl -H "xc-token: ${NOCODB_API_TOKEN}" http://localhost:8080/api/v2/meta/bases
 # - NocoDB nicht erreichbar
 ```
 
+### Round-Trip-Test in CI
+
+Jedes Release haengt an einem echten Backup und Restore dieses Stacks. Der Job
+`🧪 Backup Round Trip` in [docker-release.yml](../.github/workflows/docker-release.yml)
+ruft das wiederverwendbare
+[`modules-backup-roundtrip-test.yml`](https://github.com/bauer-group/automation-templates/blob/main/docs/workflows/modules-backup-roundtrip-test.md)
+auf und laeuft vor dem Release-Job, der seinen Erfolg voraussetzt. Er laeuft auch, wenn
+der Base-Image-Monitor nach einem neuen BackupHelper- oder NocoDB-Image ein Release
+ausloest - ein Engine-Update geht also erst raus, nachdem es NocoDB-Daten
+wiederhergestellt hat.
+
+| Phase | Was passiert |
+|-------|--------------|
+| Build | `src/nocodb`, `src/nocodb-init` und `src/nocodb-backup` werden aus dem Commit gebaut, mit frischen Base-Images |
+| Start | `docker-compose.local.yml` mit dem Profil `backup`, CI-Speichergrenzen fuer PostgreSQL, generiertes `DATABASE_PASSWORD` und `NC_AUTH_JWT_SECRET` |
+| Seed | Ueber die NocoDB-API: erster Benutzer, ein API-Token (per `.env` an den Sidecar uebergeben), eine Base mit Tabelle, ein Datensatz mit dem Marker des Laufs und ein Text-Attachment im Daten-Volume |
+| Backup | `create`, danach muss `show` `database`, `nocodb-data` und `nocodb` ohne Fehler und Warnungen listen, `verify` muss `OK` melden |
+| Loeschen | Der Datensatz ueber die API, die Attachment-Datei im Volume |
+| Restore | `nocodb-server` wird gestoppt, `restore <id> --force` laeuft, der Stack startet wieder |
+| Pruefung | Datensatz ueber die API, Datei mit exaktem Inhalt im Volume, NocoDB liefert das Attachment aus, der REST-Export im Snapshot enthaelt Datensatz und Attachment |
+
+Die Skripte liegen in [`tests/backup-roundtrip/`](../tests/backup-roundtrip/). Die Pruefung
+laeuft dreimal - vor dem Backup (Daten vorhanden), nach dem Loeschen (Daten weg) und nach
+dem Restore (Daten vorhanden) -, ein Restore, der nichts schreibt, kann also nicht
+bestehen. Den REST-Export (`nocodb`) spielt der volle Restore bewusst nicht ein (das
+geschieht gezielt mit `backuphelper nocodb restore-*`); geprueft wird, dass der Snapshot
+den Datensatz und die Bytes des Attachments enthaelt.
+
+Ein Lauf dauert gemessen 2 min 35 s: etwa 1 min fuer den Bau der drei Images, 40 s bis der
+Stack laeuft, der Rest fuer Seed, Backup, Restore und Neustart. Er startet bei Pushes auf
+`main` (reine Doku-Pushes ausgenommen), bei jedem `workflow_dispatch` und bei Pull
+Requests, die `src/`, eine Compose-Datei, `.env.example`, die Round-Trip-Skripte oder den
+Release-Workflow aendern. Schlaegt er fehl, nennt die Zusammenfassung des Laufs die
+fehlgeschlagene Phase, und das Artefakt `backup-roundtrip-diagnostics` enthaelt die Logs
+aller Services, `docker compose ps`, die Snapshot-Liste und das Manifest.
+
 ### Referenzen
 
 - [NocoDB API Dokumentation](https://meta-apis-v2.nocodb.com/)
 - [PostgreSQL pg_dump](https://www.postgresql.org/docs/current/app-pgdump.html)
 - [MinIO Dokumentation](https://min.io/docs/minio/linux/index.html)
 - [AWS S3 CLI](https://docs.aws.amazon.com/cli/latest/reference/s3/)
+- [Backup-Round-Trip-Modul](https://github.com/bauer-group/automation-templates/blob/main/docs/workflows/modules-backup-roundtrip-test.md)
 
 ---
 
@@ -1297,9 +1334,45 @@ curl -H "xc-token: ${NOCODB_API_TOKEN}" http://localhost:8080/api/v2/meta/bases
 # - NocoDB unreachable
 ```
 
+### Round-Trip Test in CI
+
+Every release is gated on a real backup and restore of this stack. The job
+`🧪 Backup Round Trip` in [docker-release.yml](../.github/workflows/docker-release.yml)
+calls the reusable
+[`modules-backup-roundtrip-test.yml`](https://github.com/bauer-group/automation-templates/blob/main/docs/workflows/modules-backup-roundtrip-test.md)
+and runs before the release job, which needs it to pass. It also runs when the base
+image monitor dispatches a release after a new BackupHelper or NocoDB image, so an
+engine update ships only after it restored NocoDB data.
+
+| Phase | What happens |
+|-------|--------------|
+| Build | `src/nocodb`, `src/nocodb-init` and `src/nocodb-backup` are built from the commit, with fresh base images |
+| Start | `docker-compose.local.yml` with the `backup` profile, CI-sized PostgreSQL memory, a generated `DATABASE_PASSWORD` and `NC_AUTH_JWT_SECRET` |
+| Seed | Through the NocoDB API: the first user, an API token (handed to the sidecar through the `.env`), a base with a table, a record carrying the run's marker and a text attachment on the data volume |
+| Back up | `create`, then `show` must list `database`, `nocodb-data` and `nocodb` without errors or warnings, `verify` must report `OK` |
+| Delete | The record through the API, the attachment file on the volume |
+| Restore | `nocodb-server` is stopped, `restore <id> --force` runs, the stack is started again |
+| Check | The record through the API, the file with its exact content on the volume, NocoDB serving the attachment, and the snapshot's REST export holding the record and the attachment |
+
+The scripts live in [`tests/backup-roundtrip/`](../tests/backup-roundtrip/). The check
+runs three times - before the backup (data present), after the deletion (data absent)
+and after the restore (data present) - so a restore that writes nothing cannot pass. The
+full restore leaves the REST export (`nocodb`) alone on purpose (it is restored on demand
+with `backuphelper nocodb restore-*`); the check proves that the snapshot holds the record
+and the attachment's bytes.
+
+A run took 2 min 35 s as measured: about 1 min to build the three images, 40 s until the
+stack is up, the rest for seeding, backup, restore and restart. It starts on pushes to
+`main` (documentation-only pushes excluded), on every `workflow_dispatch`, and on pull
+requests that touch `src/`, a compose file, `.env.example`, the round-trip scripts or the
+release workflow. When it fails, the run's summary names the failed phase, and the
+`backup-roundtrip-diagnostics` artifact holds every service's log, `docker compose ps`,
+the snapshot list and the manifest.
+
 ### References
 
 - [NocoDB API Documentation](https://meta-apis-v2.nocodb.com/)
 - [PostgreSQL pg_dump](https://www.postgresql.org/docs/current/app-pgdump.html)
 - [MinIO Documentation](https://min.io/docs/minio/linux/index.html)
 - [AWS S3 CLI](https://docs.aws.amazon.com/cli/latest/reference/s3/)
+- [Backup round-trip module](https://github.com/bauer-group/automation-templates/blob/main/docs/workflows/modules-backup-roundtrip-test.md)
