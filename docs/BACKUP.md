@@ -32,7 +32,7 @@ Automatisierte Backup-Loesung für NocoDB mit PostgreSQL-Dumps, API-Exports und 
 │  │         │                                                           │   │
 │  │         ▼                                                           │   │
 │  │   ┌─────────────┐     ┌─────────────────────┐                       │   │
-│  │   │  pg_dump    │────►│  database.sql.gz    │                       │   │
+│  │   │  pg_dump    │────►│  database.dump      │                       │   │
 │  │   └─────────────┘     └─────────────────────┘                       │   │
 │  │         │                                                           │   │
 │  │         ▼                                                           │   │
@@ -64,9 +64,9 @@ Automatisierte Backup-Loesung für NocoDB mit PostgreSQL-Dumps, API-Exports und 
 
 Vollstaendiger Datenbank-Dump für Disaster Recovery:
 
-- **Format:** Komprimiertes SQL (`database.sql.gz`)
+- **Format:** PostgreSQL Custom-Format (`database.dump`, komprimiert)
 - **Inhalt:** Komplette Datenbankstruktur und Daten
-- **Wiederherstellung:** Mit `psql` oder dem CLI-Tool
+- **Wiederherstellung:** Mit dem CLI-Tool (`pg_restore --clean --if-exists`), auch in eine laufende Datenbank
 - **Empfehlung:** Primaeres Backup für vollstaendige Wiederherstellung
 
 #### 2. NocoDB Data Files (tar.gz)
@@ -93,20 +93,24 @@ Strukturierter Export ueber die NocoDB REST API:
 **Struktur:**
 
 ```text
-2024-02-05_05-15-00/
-├── database.sql.gz           # PostgreSQL Dump
-├── nocodb-data.tar.gz        # NocoDB Daten-Dateien (1:1 Archiv)
-├── bases/
-│   └── {base_name}/
-│       ├── metadata.json     # Base Metadaten
-│       └── tables/
-│           └── {table_name}/
-│               ├── schema.json      # Table Schema
-│               ├── records.json.gz  # Alle Records (gzip-komprimiert)
-│               └── attachments/     # Heruntergeladene Dateien
-│                   └── {field}/{filename}
-└── manifest.json             # Backup-Manifest
+/data/
+├── 2024-02-05_05-15-00.tar.gz          # Snapshot (sha256 im Manifest)
+│   ├── manifest.json
+│   ├── database.dump                   # PostgreSQL Dump (Custom-Format)
+│   ├── nocodb-data.tar.gz              # NocoDB Daten-Dateien (1:1 Archiv)
+│   └── nocodb.tar.gz                   # REST-API-Export
+│       ├── manifest.json
+│       └── bases/{base_name}/
+│           ├── metadata.json           # Base Metadaten
+│           └── tables/{table_name}/
+│               ├── schema.json         # Table Schema
+│               ├── records.json.gz     # Alle Records (gzip-komprimiert)
+│               └── attachments/{field}/{filename}
+└── 2024-02-05_05-15-00.manifest.json   # Manifest: Komponenten, Groessen, sha256
 ```
+
+Snapshots von vor dem Wechsel auf das Custom-Format enthalten stattdessen
+`database.sql.gz` (Plain-SQL) - siehe [Datenbank wiederherstellen](#datenbank-wiederherstellen).
 
 ### Quick Start
 
@@ -281,27 +285,36 @@ docker exec ${STACK_NAME}_BACKUP backuphelper download 2024-02-05_05-15-00 /data
 docker exec ${STACK_NAME}_BACKUP backuphelper show 2024-02-05_05-15-00
 ```
 
-**Ausgabe:**
-
-```text
-2024-02-05_05-15-00
-├── database.sql.gz (45.2 MB)
-├── manifest.json
-└── bases/
-    └── Meine_Base/
-        ├── metadata.json
-        ├── Kunden/ (1250 records, 1.2 MB)
-        │   └── attachments/ (34 files, 89.5 MB)
-        └── Projekte/ (480 records, 0.3 MB)
-```
+`show` gibt das Manifest als JSON aus: je Komponente (`database`, `nocodb-data`,
+`nocodb`) Name, Art, Groesse, sha256 und einen eventuellen Fehler. `verify <id>`
+prueft die Pruefsumme des Archivs (`OK <id>`).
 
 #### Datenbank wiederherstellen
 
 ```bash
+docker compose stop nocodb-server
 docker exec ${STACK_NAME}_BACKUP backuphelper restore 2024-02-05_05-15-00 --only database
+docker compose start nocodb-server
 ```
 
 **WARNUNG:** Dies ueberschreibt die gesamte Datenbank!
+
+Der Dump liegt im Custom-Format vor (`database.dump`); die Engine spielt ihn mit
+`pg_restore --clean --if-exists --single-transaction` ein, ersetzt also alle
+Objekte aus dem Backup auch in einer laufenden Datenbank. NocoDB vorher stoppen,
+damit keine offenen Verbindungen den Restore blockieren.
+
+**Aeltere Snapshots** (vor dem Wechsel auf das Custom-Format) enthalten
+`database.sql.gz`. Den spielt die Engine mit `psql` ein, und das gelingt nur in
+eine **leere** Datenbank - in einer bestehenden bricht er beim ersten bereits
+vorhandenen Objekt ab. Vorher die Datenbank neu anlegen:
+
+```bash
+docker compose stop nocodb-server
+docker exec ${STACK_NAME}_DATABASE psql -U nocodb -d postgres \
+    -c 'DROP DATABASE nocodb WITH (FORCE)' -c 'CREATE DATABASE nocodb OWNER nocodb'
+docker exec ${STACK_NAME}_BACKUP backuphelper restore 2024-02-05_05-15-00 --only database
+```
 
 #### Daten-Dateien wiederherstellen (nach restore-dump)
 
@@ -396,8 +409,9 @@ Bei komplettem Datenverlust (Datenbank + Anwendung):
 docker compose -f docker-compose.traefik.yml up -d database-server
 docker compose -f docker-compose.traefik.yml up -d nocodb-init
 
-# 2. Backup-Container starten (NocoDB NICHT starten!)
-docker compose -f docker-compose.traefik.yml --profile backup up -d nocodb-backup
+# 2. Backup-Container starten (NocoDB NICHT starten - ohne --no-deps wuerde
+#    depends_on den nocodb-server mitstarten)
+docker compose -f docker-compose.traefik.yml --profile backup up -d --no-deps nocodb-backup
 
 # 3. Backup herunterladen (falls nur auf S3)
 docker exec ${STACK_NAME}_BACKUP backuphelper download 2024-02-05_05-15-00 /data/export  # exports archive+manifest; restore/verify auto-hydrate from S3
@@ -494,11 +508,14 @@ docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-records 2024-02-05_
 Für fortgeschrittene Benutzer, die direkt mit PostgreSQL arbeiten:
 
 ```bash
-# Dump entpacken
-gunzip -k /path/to/backup/database.sql.gz
+# Dump aus dem Snapshot-Archiv holen
+mkdir -p /tmp/restore
+tar -xzf /path/to/2024-02-05_05-15-00.tar.gz -C /tmp/restore database.dump
 
-# In Datenbank einspielen
-cat /path/to/backup/database.sql | docker exec -i ${STACK_NAME}_DATABASE psql -U nocodb -d nocodb
+# In die Datenbank einspielen (NocoDB vorher stoppen)
+docker compose stop nocodb-server
+docker exec -i ${STACK_NAME}_DATABASE pg_restore --clean --if-exists --no-owner --no-acl \
+    --single-transaction -U nocodb -d nocodb < /tmp/restore/database.dump
 
 # Danach Attachments wiederherstellen (falls im Backup enthalten)
 docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-attachments 2024-02-05_05-15-00
@@ -654,7 +671,7 @@ Automated backup solution for NocoDB with PostgreSQL dumps, API exports, and S3 
 │  │         │                                                           │   │
 │  │         ▼                                                           │   │
 │  │   ┌─────────────┐     ┌─────────────────────┐                       │   │
-│  │   │  pg_dump    │────►│  database.sql.gz    │                       │   │
+│  │   │  pg_dump    │────►│  database.dump      │                       │   │
 │  │   └─────────────┘     └─────────────────────┘                       │   │
 │  │         │                                                           │   │
 │  │         ▼                                                           │   │
@@ -686,9 +703,9 @@ Automated backup solution for NocoDB with PostgreSQL dumps, API exports, and S3 
 
 Full database dump for disaster recovery:
 
-- **Format:** Compressed SQL (`database.sql.gz`)
+- **Format:** PostgreSQL custom format (`database.dump`, compressed)
 - **Contents:** Complete database structure and data
-- **Restore:** Using `psql` or the CLI tool
+- **Restore:** Using the CLI tool (`pg_restore --clean --if-exists`), also into a running database
 - **Recommendation:** Primary backup for full recovery
 
 #### 2. NocoDB Data Files (tar.gz)
@@ -715,20 +732,24 @@ Structured export via the NocoDB REST API:
 **Structure:**
 
 ```text
-2024-02-05_05-15-00/
-├── database.sql.gz           # PostgreSQL dump
-├── nocodb-data.tar.gz        # NocoDB data files (1:1 archive)
-├── bases/
-│   └── {base_name}/
-│       ├── metadata.json     # Base metadata
-│       └── tables/
-│           └── {table_name}/
-│               ├── schema.json      # Table schema
-│               ├── records.json.gz  # All records (gzip compressed)
-│               └── attachments/     # Downloaded files
-│                   └── {field}/{filename}
-└── manifest.json             # Backup manifest
+/data/
+├── 2024-02-05_05-15-00.tar.gz          # Snapshot (sha256 in the manifest)
+│   ├── manifest.json
+│   ├── database.dump                   # PostgreSQL dump (custom format)
+│   ├── nocodb-data.tar.gz              # NocoDB data files (1:1 archive)
+│   └── nocodb.tar.gz                   # REST API export
+│       ├── manifest.json
+│       └── bases/{base_name}/
+│           ├── metadata.json           # Base metadata
+│           └── tables/{table_name}/
+│               ├── schema.json         # Table schema
+│               ├── records.json.gz     # All records (gzip compressed)
+│               └── attachments/{field}/{filename}
+└── 2024-02-05_05-15-00.manifest.json   # Manifest: components, sizes, sha256
 ```
+
+Snapshots taken before the switch to the custom format hold `database.sql.gz`
+(plain SQL) instead - see [Restore Database](#restore-database).
 
 ### Quick Start
 
@@ -902,27 +923,36 @@ docker exec ${STACK_NAME}_BACKUP backuphelper download 2024-02-05_05-15-00 /data
 docker exec ${STACK_NAME}_BACKUP backuphelper show 2024-02-05_05-15-00
 ```
 
-**Output:**
-
-```text
-2024-02-05_05-15-00
-├── database.sql.gz (45.2 MB)
-├── manifest.json
-└── bases/
-    └── My_Base/
-        ├── metadata.json
-        ├── Customers/ (1250 records, 1.2 MB)
-        │   └── attachments/ (34 files, 89.5 MB)
-        └── Projects/ (480 records, 0.3 MB)
-```
+`show` prints the manifest as JSON: per component (`database`, `nocodb-data`,
+`nocodb`) its name, kind, size, sha256 and an error, if any. `verify <id>` checks
+the archive checksum (`OK <id>`).
 
 #### Restore Database
 
 ```bash
+docker compose stop nocodb-server
 docker exec ${STACK_NAME}_BACKUP backuphelper restore 2024-02-05_05-15-00 --only database
+docker compose start nocodb-server
 ```
 
 **WARNING:** This overwrites the entire database!
+
+The dump is in the custom format (`database.dump`); the engine restores it with
+`pg_restore --clean --if-exists --single-transaction`, so it replaces every object
+of the backup, also in a running database. Stop NocoDB first so that no open
+connection blocks the restore.
+
+**Older snapshots** (taken before the switch to the custom format) hold
+`database.sql.gz`. The engine replays it with `psql`, which only works into an
+**empty** database - in an existing one it stops at the first object that
+already exists. Recreate the database first:
+
+```bash
+docker compose stop nocodb-server
+docker exec ${STACK_NAME}_DATABASE psql -U nocodb -d postgres \
+    -c 'DROP DATABASE nocodb WITH (FORCE)' -c 'CREATE DATABASE nocodb OWNER nocodb'
+docker exec ${STACK_NAME}_BACKUP backuphelper restore 2024-02-05_05-15-00 --only database
+```
 
 #### Restore Data Files (after restore-dump)
 
@@ -1017,8 +1047,9 @@ For complete data loss (database + application):
 docker compose -f docker-compose.traefik.yml up -d database-server
 docker compose -f docker-compose.traefik.yml up -d nocodb-init
 
-# 2. Start backup container (do NOT start NocoDB!)
-docker compose -f docker-compose.traefik.yml --profile backup up -d nocodb-backup
+# 2. Start backup container (do NOT start NocoDB - without --no-deps,
+#    depends_on would start nocodb-server as well)
+docker compose -f docker-compose.traefik.yml --profile backup up -d --no-deps nocodb-backup
 
 # 3. Download backup (if only on S3)
 docker exec ${STACK_NAME}_BACKUP backuphelper download 2024-02-05_05-15-00 /data/export  # exports archive+manifest; restore/verify auto-hydrate from S3
@@ -1115,11 +1146,14 @@ docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-records 2024-02-05_
 For advanced users working directly with PostgreSQL:
 
 ```bash
-# Decompress dump
-gunzip -k /path/to/backup/database.sql.gz
+# Take the dump out of the snapshot archive
+mkdir -p /tmp/restore
+tar -xzf /path/to/2024-02-05_05-15-00.tar.gz -C /tmp/restore database.dump
 
-# Import into database
-cat /path/to/backup/database.sql | docker exec -i ${STACK_NAME}_DATABASE psql -U nocodb -d nocodb
+# Restore into the database (stop NocoDB first)
+docker compose stop nocodb-server
+docker exec -i ${STACK_NAME}_DATABASE pg_restore --clean --if-exists --no-owner --no-acl \
+    --single-transaction -U nocodb -d nocodb < /tmp/restore/database.dump
 
 # Then restore attachments (if included in backup)
 docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-attachments 2024-02-05_05-15-00
