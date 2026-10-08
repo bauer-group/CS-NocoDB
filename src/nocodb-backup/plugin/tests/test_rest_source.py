@@ -71,3 +71,56 @@ def test_produce_writes_full_export_tree(tmp_path, monkeypatch):
         manifest = json.loads(tar.extractfile("manifest.json").read())
         assert manifest["version"] == "1.0"
         assert manifest["bases"][0]["title"] == "Base A"
+
+
+def _export_tree(component) -> dict[str, bytes]:
+    with tarfile.open(component.path, "r:gz") as tar:
+        return {m.name: tar.extractfile(m).read() for m in tar.getmembers() if m.isfile()}
+
+
+def test_produce_downloads_local_storage_attachments(tmp_path, monkeypatch):
+    # NocoDB's default Local storage adapter stores an attachment as a
+    # NocoDB-relative "path" (plus a "signedPath" when read through the API) -
+    # there is no "url". The export must still carry the file.
+    src = NocoDBRestSource({"type": "nocodb-rest", "token": "t", "api_url": "http://nocodb:8080"})
+    stored = "2026/10/08/abc/report_X1y2Z.txt"
+    attachment = {"path": f"download/{stored}", "signedPath": f"dltemp/sig/1700000000/{stored}",
+                  "title": "report.txt", "mimetype": "text/plain", "size": 7}
+    routes = {
+        "/api/v2/meta/bases": {"list": [{"id": "b1", "title": "Base A"}]},
+        "/api/v2/meta/bases/b1/tables": {"list": [{"id": "t1", "title": "Tbl"}]},
+        "/api/v2/meta/tables/t1": {"id": "t1", "title": "Tbl", "columns": [
+            {"title": "Name", "uidt": "SingleLineText"}, {"title": "Files", "uidt": "Attachment"}]},
+        "/api/v2/tables/t1/records?offset=0": {
+            "list": [{"Id": 1, "Name": "a", "Files": [attachment]}], "pageInfo": {"totalRows": 1}},
+    }
+    served = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == f"/dltemp/sig/1700000000/{stored}":
+            served.append(request.url.path)
+            return httpx.Response(200, content=b"content")
+        key = request.url.path
+        if request.url.query:
+            key = f"{key}?offset={request.url.params.get('offset', '0')}"
+        body = routes.get(key)
+        return httpx.Response(200, json=body) if body is not None else httpx.Response(404)
+
+    monkeypatch.setattr(src, "_client", lambda: httpx.Client(
+        base_url=src.api_url, transport=httpx.MockTransport(handler)))
+
+    [comp] = src.produce(tmp_path)
+    assert comp.error is None
+    assert comp.metadata["attachments"] == 1
+    assert served == [f"/dltemp/sig/1700000000/{stored}"]  # the signed link, which also works with secure attachments
+    assert _export_tree(comp)["bases/Base A/tables/Tbl/attachments/Files/report.txt"] == b"content"
+
+
+def test_attachment_link_prefers_signed_links():
+    from nocodb_backup_ext.rest_source import _attachment_link
+
+    assert _attachment_link({"path": "download/a", "signedPath": "dltemp/s/1/a"}) == "dltemp/s/1/a"
+    assert _attachment_link({"path": "download/a"}) == "download/a"
+    assert _attachment_link({"url": "https://s3/a", "signedUrl": "https://s3/a?sig"}) == "https://s3/a?sig"
+    assert _attachment_link({"url": "https://s3/a"}) == "https://s3/a"
+    assert _attachment_link({"title": "no link"}) is None
