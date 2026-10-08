@@ -331,6 +331,11 @@ Original-Pfaden, passend zu den Referenzen in der wiederhergestellten Datenbank.
 - NocoDB muss waehrend der Wiederherstellung gestoppt sein
 - Verwenden nach `restore-dump` für eine vollstaendige Disaster Recovery
 - Nur relevant für lokale Attachments (nicht bei S3-Storage)
+- Der Backup-Sidecar laeuft als root (`user: "0:0"` in den Compose-Dateien, mit
+  auf `DAC_OVERRIDE` und `FOWNER` reduzierten Capabilities). nocodb-server laeuft
+  als root und legt seine Dateien root-eigen an; mit der uid 1000 der Engine
+  liesse sich das Volume zwar sichern, ein Restore scheiterte aber mit
+  `Permission denied`
 
 #### Tabellen-Schema wiederherstellen (neues System)
 
@@ -969,6 +974,10 @@ matching the references in the restored database.
 - NocoDB must be stopped during restoration
 - Use after `restore-dump` for a complete disaster recovery
 - Only relevant for local attachments (not for S3 storage)
+- The backup sidecar runs as root (`user: "0:0"` in the compose files, with
+  capabilities cut down to `DAC_OVERRIDE` and `FOWNER`). nocodb-server runs as
+  root and creates its files root-owned; with the engine's uid 1000 the volume
+  could be backed up, but a restore failed with `Permission denied`
 
 #### Restore Table Schema (new system)
 

@@ -63,6 +63,8 @@ LABEL com.bauer-group.image.stack="nocodb"
 LABEL org.opencontainers.image.version="1.0.4"
 
 # Drop back to the engine's non-root user; inherit ENTRYPOINT + HEALTHCHECK.
+# The compose files override it with user: "0:0" - nocodb-server writes its
+# data volume as root, and a restore of that volume has to write there too.
 USER backup
 
 # Sources / destinations / schedule come from BACKUP_CONFIG_JSON in compose.
