@@ -31,11 +31,14 @@ Skips cleanly (no component) when `enabled` is false or the token is empty — s
 `BACKUP_API_EXPORT=false` is just an unset token.
 
 A token NocoDB rejects fails the component (the base list is the root of the
-export). A failed table list, schema, records page or attachment download keeps
-the rest of the export and is reported in `metadata.warnings`, so the engine
-degrades the job to warning and alerts. Attachments are fetched through their
-signed link where NocoDB provides one; the API token is only ever sent to
-`api_url`, never to an object-storage host or a redirect target elsewhere.
+export). Since BackupHelper 1.7.7 that ends the run in `error`: `--now` exits 1,
+the alert goes out at every level and the container turns unhealthy (up to 1.7.6
+the job only degraded to warning while the other components succeeded). A failed
+table list, schema, records page or attachment download keeps the rest of the
+export and is reported in `metadata.warnings`, so the engine degrades the job to
+warning and alerts. Attachments are fetched through their signed link where
+NocoDB provides one; the API token is only ever sent to `api_url`, never to an
+object-storage host or a redirect target elsewhere.
 
 ### 2. `nocodb` restore command group
 
