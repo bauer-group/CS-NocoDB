@@ -208,8 +208,12 @@ NOCODB_BACKUP_ALERT_ENABLED=true
 NOCODB_BACKUP_ALERT_LEVEL=warnings  # errors, warnings, all
 NOCODB_BACKUP_ALERT_CHANNELS=email,teams  # Komma-getrennt
 
-# Email (benoetigt SMTP-Konfiguration)
+# Email (nutzt SMTP_HOST, SMTP_USER, SMTP_PASSWORD und SMTP_FROM)
 NOCODB_BACKUP_ALERT_EMAIL=admin@example.com
+# Versand per STARTTLS auf einem Submission-Port. Die Engine spricht kein
+# implizites TLS (Port 465) - SMTP_PORT/SMTP_TLS gelten nur fuer NocoDB.
+NOCODB_BACKUP_SMTP_PORT=587
+NOCODB_BACKUP_SMTP_STARTTLS=true    # false nur fuer ein Relay ohne TLS (Port 25)
 
 # Microsoft Teams
 NOCODB_BACKUP_TEAMS_WEBHOOK=https://outlook.office.com/webhook/...
@@ -852,8 +856,12 @@ NOCODB_BACKUP_ALERT_ENABLED=true
 NOCODB_BACKUP_ALERT_LEVEL=warnings  # errors, warnings, all
 NOCODB_BACKUP_ALERT_CHANNELS=email,teams  # comma-separated
 
-# Email (requires SMTP configuration)
+# Email (uses SMTP_HOST, SMTP_USER, SMTP_PASSWORD and SMTP_FROM)
 NOCODB_BACKUP_ALERT_EMAIL=admin@example.com
+# Sent with STARTTLS on a submission port. The engine has no implicit TLS
+# (port 465) - SMTP_PORT/SMTP_TLS apply to NocoDB only.
+NOCODB_BACKUP_SMTP_PORT=587
+NOCODB_BACKUP_SMTP_STARTTLS=true    # false only for a relay without TLS (port 25)
 
 # Microsoft Teams
 NOCODB_BACKUP_TEAMS_WEBHOOK=https://outlook.office.com/webhook/...

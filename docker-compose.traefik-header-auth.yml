@@ -313,6 +313,8 @@ services:
       # dump_format "custom": the engine restores it with pg_restore --clean
       # --if-exists, which also works over a live database. A "plain" dump is
       # replayed with psql and stops at the first table that already exists.
+      # Alert mail: the engine speaks STARTTLS ("tls"), not implicit TLS, so it
+      # uses NOCODB_BACKUP_SMTP_PORT/_STARTTLS - not NocoDB's SMTP_PORT/SMTP_TLS.
       BACKUP_CONFIG_JSON: |
         {
           "instance_name": "${NOCODB_BACKUP_INSTANCE_NAME:-${STACK_NAME:-nocodb}}",
@@ -346,7 +348,7 @@ services:
             "notifications": {
               "channels": "${NOCODB_BACKUP_ALERT_CHANNELS:-}",
               "level": "${NOCODB_BACKUP_ALERT_LEVEL:-warnings}",
-              "email": {"host": "${SMTP_HOST:-}", "port": ${SMTP_PORT:-587}, "tls": ${SMTP_TLS:-true},
+              "email": {"host": "${SMTP_HOST:-}", "port": ${NOCODB_BACKUP_SMTP_PORT:-587}, "tls": ${NOCODB_BACKUP_SMTP_STARTTLS:-true},
                         "username": "${SMTP_USER:-}", "password": "$${SMTP_PASSWORD}",
                         "sender": "${SMTP_FROM:-}", "recipients": ["${NOCODB_BACKUP_ALERT_EMAIL:-}"]},
               "webhook": {"url": "${NOCODB_BACKUP_WEBHOOK_URL:-}", "secret": "$${WEBHOOK_SECRET}"},
