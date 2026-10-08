@@ -196,8 +196,9 @@ NOCODB_BACKUP_S3_SECRET_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
 NOCODB_BACKUP_S3_REGION=eu-central-1
 NOCODB_BACKUP_S3_PREFIX=nocodb-backup
 
-# Lokales Backup nach S3-Upload loeschen
-NOCODB_BACKUP_DELETE_LOCAL_AFTER_S3=false
+# Lokale Kopie nach erfolgreichem S3-Upload behalten. false = loeschen, sobald S3
+# den Snapshot gespeichert hat; ohne S3-Kopie bleibt sie, und der Lauf endet in warning.
+NOCODB_BACKUP_KEEP_LOCAL_ARCHIVE=true
 ```
 
 #### Alerting
@@ -881,8 +882,9 @@ NOCODB_BACKUP_S3_SECRET_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
 NOCODB_BACKUP_S3_REGION=eu-central-1
 NOCODB_BACKUP_S3_PREFIX=nocodb-backup
 
-# Delete local backup after S3 upload
-NOCODB_BACKUP_DELETE_LOCAL_AFTER_S3=false
+# Keep the local copy after a successful S3 upload. false = delete it once S3
+# stored the snapshot; without an S3 copy it stays, and the run ends in warning.
+NOCODB_BACKUP_KEEP_LOCAL_ARCHIVE=true
 ```
 
 #### Alerting
