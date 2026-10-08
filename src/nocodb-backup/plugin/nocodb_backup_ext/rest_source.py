@@ -43,6 +43,20 @@ def _sanitize_filename(name: str) -> str:
     return safe[:100]
 
 
+def _attachment_link(att: dict) -> str | None:
+    """Where an attachment can be downloaded from.
+
+    NocoDB's Local storage adapter (the default) stores an attachment as a
+    NocoDB-relative ``path``, object storage as an absolute ``url``; read
+    through the API, both come with a signed variant. The signed links go
+    first: they also work with NC_SECURE_ATTACHMENTS and private buckets."""
+    for key in ("signedPath", "path", "signedUrl", "url"):
+        value = att.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return None
+
+
 class NocoDBRestSource(Source):
     """Exports NocoDB data via the REST API into a snapshot component."""
 
@@ -133,9 +147,10 @@ class NocoDBRestSource(Source):
                 value = record.get(field_name)
                 if value and isinstance(value, list):
                     for att in value:
-                        if isinstance(att, dict) and "url" in att:
+                        link = _attachment_link(att) if isinstance(att, dict) else None
+                        if link:
                             attachments.append({
-                                "url": att.get("url"), "path": att.get("path"),
+                                "url": att.get("url"), "path": att.get("path"), "link": link,
                                 "title": att.get("title", ""), "mimetype": att.get("mimetype", ""),
                                 "size": att.get("size", 0), "field": field_name,
                             })
@@ -197,12 +212,12 @@ class NocoDBRestSource(Source):
                     if self.include_attachments:
                         fields = table.get("columns", [])
                         for att in self._extract_attachments(all_records, fields):
-                            url = att.get("url")
-                            title = att.get("title") or att.get("path", "").split("/")[-1]
-                            if url and title:
+                            stored = att.get("path") or att.get("url") or ""
+                            title = att.get("title") or stored.split("/")[-1].split("?")[0]
+                            if title:
                                 field_dir = table_dir / "attachments" / _sanitize_filename(att.get("field", "unknown"))
                                 target = field_dir / _sanitize_filename(title)
-                                if self._download_file(client, url, target):
+                                if self._download_file(client, att["link"], target):
                                     attachments_count += 1
                                     if target.exists():
                                         total_size += target.stat().st_size
