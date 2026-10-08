@@ -124,3 +124,41 @@ def test_attachment_link_prefers_signed_links():
     assert _attachment_link({"url": "https://s3/a", "signedUrl": "https://s3/a?sig"}) == "https://s3/a?sig"
     assert _attachment_link({"url": "https://s3/a"}) == "https://s3/a"
     assert _attachment_link({"title": "no link"}) is None
+
+
+def test_download_never_sends_the_token_to_another_host(tmp_path, monkeypatch):
+    # Object-storage attachments carry absolute URLs (presigned S3 links, or any
+    # URL a user put into an attachment cell). The NocoDB API token must only go
+    # to NocoDB itself - also when a NocoDB link redirects to another host.
+    src = NocoDBRestSource({"type": "nocodb-rest", "token": "secret-token", "api_url": "http://nocodb:8080"})
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.url.host, request.headers.get("xc-token")))
+        if request.url.host == "nocodb" and request.url.path == "/dltemp/sig/1/a.txt":
+            return httpx.Response(302, headers={"location": "https://bucket.s3.example.com/a.txt?X-Amz-Signature=s"})
+        return httpx.Response(200, content=b"bytes")
+
+    transport = httpx.MockTransport(handler)
+    client = httpx.Client(base_url=src.api_url, headers={"xc-token": src.api_token}, transport=transport)
+    monkeypatch.setattr(src, "_foreign_client", lambda: httpx.Client(transport=transport))
+
+    assert src._download_file(client, "https://bucket.s3.example.com/b.txt?X-Amz-Signature=s", tmp_path / "b")
+    assert src._download_file(client, "dltemp/sig/1/a.txt", tmp_path / "a")
+    assert (tmp_path / "a").read_bytes() == b"bytes"
+    assert seen == [
+        ("bucket.s3.example.com", None),   # absolute foreign URL: no token
+        ("nocodb", "secret-token"),        # NocoDB itself: token
+        ("bucket.s3.example.com", None),   # redirect target on another host: no token
+    ]
+
+
+def test_download_follows_a_bounded_number_of_redirects(tmp_path, monkeypatch):
+    src = NocoDBRestSource({"type": "nocodb-rest", "token": "t", "api_url": "http://nocodb:8080"})
+
+    def loop(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(302, headers={"location": "/loop"})
+
+    client = httpx.Client(base_url=src.api_url, transport=httpx.MockTransport(loop))
+    assert src._download_file(client, "/loop", tmp_path / "x") is False
+    assert not (tmp_path / "x").exists()

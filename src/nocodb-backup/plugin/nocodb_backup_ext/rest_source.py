@@ -26,6 +26,9 @@ from backuphelper.sources.base import Source, StagedComponent
 
 log = logging.getLogger("backuphelper.plugin.nocodb")
 
+# Redirects followed per attachment download; each hop picks its client anew.
+_MAX_REDIRECTS = 5
+
 
 def _as_bool(value: Any, default: bool = True) -> bool:
     if isinstance(value, bool):
@@ -91,21 +94,45 @@ class NocoDBRestSource(Source):
             log.error("NocoDB API request failed: %s", e)
             return None
 
+    def _foreign_client(self) -> httpx.Client:
+        """Client for hosts other than NocoDB: no API token, no NocoDB headers."""
+        return httpx.Client(timeout=60.0)
+
+    def _is_nocodb(self, url: httpx.URL) -> bool:
+        api = httpx.URL(self.api_url)
+        return (url.scheme, url.host, url.port) == (api.scheme, api.host, api.port)
+
+    def _fetch(self, client: httpx.Client, url: httpx.URL) -> bytes:
+        """GET ``url`` and follow redirects by hand: ``client`` carries the API
+        token, and httpx would keep that header on a redirect to another host
+        (only Authorization is dropped there). Object-storage links and any URL
+        a user put into an attachment cell must never see the token."""
+        for _ in range(_MAX_REDIRECTS + 1):
+            if self._is_nocodb(url):
+                resp = client.get(url, follow_redirects=False)
+            else:
+                with self._foreign_client() as foreign:
+                    resp = foreign.get(url, follow_redirects=False)
+            if resp.is_redirect and resp.next_request is not None:
+                url = resp.next_request.url
+                continue
+            resp.raise_for_status()
+            return resp.content
+        raise httpx.TooManyRedirects(f"more than {_MAX_REDIRECTS} redirects")
+
     def _download_file(self, client: httpx.Client, url: str, target_path: Path) -> bool:
         try:
-            if url.startswith("/"):
-                full_url = f"{self.api_url}{url}"
-            elif url.startswith("http"):
-                full_url = url
+            if url.startswith(("http://", "https://")):
+                full_url = httpx.URL(url)
             else:
-                full_url = f"{self.api_url}/{url}"
-            resp = client.get(full_url, follow_redirects=True)
-            resp.raise_for_status()
+                full_url = httpx.URL(f"{self.api_url}/{url.lstrip('/')}")
+            content = self._fetch(client, full_url)
             target_path.parent.mkdir(parents=True, exist_ok=True)
-            target_path.write_bytes(resp.content)
+            target_path.write_bytes(content)
             return True
         except Exception as e:  # noqa: BLE001
-            log.warning("Failed to download %s: %s", url, e)
+            # The link itself is not logged: signed links carry their own token.
+            log.warning("Failed to download attachment %s: %s", target_path.name, e)
             return False
 
     def _get_bases(self, client: httpx.Client) -> list[dict]:
