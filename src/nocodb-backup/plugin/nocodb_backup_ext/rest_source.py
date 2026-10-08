@@ -28,6 +28,18 @@ log = logging.getLogger("backuphelper.plugin.nocodb")
 
 # Redirects followed per attachment download; each hop picks its client anew.
 _MAX_REDIRECTS = 5
+# Warnings kept in the component metadata; the rest is counted.
+_MAX_WARNINGS = 20
+
+
+class _RequestFailed(Exception):
+    """A NocoDB API request that returned no usable JSON."""
+
+
+def _summarize(warnings: list[str]) -> list[str]:
+    if len(warnings) <= _MAX_WARNINGS:
+        return warnings
+    return warnings[:_MAX_WARNINGS] + [f"... and {len(warnings) - _MAX_WARNINGS} more"]
 
 
 def _as_bool(value: Any, default: bool = True) -> bool:
@@ -83,16 +95,16 @@ class NocoDBRestSource(Source):
         )
 
     def _api_get(self, client: httpx.Client, endpoint: str, params: dict | None = None):
+        """GET a NocoDB API endpoint. A failed request raises _RequestFailed - the
+        caller decides whether it ends the export or leaves a reported gap."""
         try:
             resp = client.get(endpoint, params=params)
             resp.raise_for_status()
             return resp.json()
         except httpx.HTTPStatusError as e:
-            log.error("NocoDB API error %s: %s", e.response.status_code, endpoint)
-            return None
-        except Exception as e:  # noqa: BLE001 - soft-fail per request, export continues
-            log.error("NocoDB API request failed: %s", e)
-            return None
+            raise _RequestFailed(f"HTTP {e.response.status_code} for {endpoint}") from e
+        except (httpx.HTTPError, ValueError) as e:
+            raise _RequestFailed(f"{endpoint}: {e}") from e
 
     def _foreign_client(self) -> httpx.Client:
         """Client for hosts other than NocoDB: no API token, no NocoDB headers."""
@@ -136,21 +148,27 @@ class NocoDBRestSource(Source):
             return False
 
     def _get_bases(self, client: httpx.Client) -> list[dict]:
+        # Not caught: without the base list there is nothing to export - a
+        # rejected or expired token must fail the component, not empty it.
         resp = self._api_get(client, "/api/v2/meta/bases")
-        if resp and isinstance(resp, dict):
+        if isinstance(resp, dict):
             return resp.get("list", [])
         return []
 
-    def _get_tables(self, client: httpx.Client, base_id: str) -> list[dict]:
+    def _get_tables(self, client: httpx.Client, base_id: str, warnings: list[str]) -> list[dict]:
         resp = self._api_get(client, f"/api/v2/meta/bases/{base_id}/tables")
-        if not resp or not isinstance(resp, dict):
+        if not isinstance(resp, dict):
             return []
         detailed = []
         for table in resp.get("list", []):
             table_id = table.get("id")
             if not table_id:
                 continue
-            detail = self._api_get(client, f"/api/v2/meta/tables/{table_id}")
+            try:
+                detail = self._api_get(client, f"/api/v2/meta/tables/{table_id}")
+            except _RequestFailed as e:
+                detail = None
+                warnings.append(f"table {table.get('title')}: schema incomplete, basic metadata only ({e})")
             if detail and isinstance(detail, dict):
                 detailed.append(detail)
             else:
@@ -162,7 +180,7 @@ class NocoDBRestSource(Source):
         resp = self._api_get(
             client, f"/api/v2/tables/{table_id}/records", params={"limit": limit, "offset": offset}
         )
-        if resp and isinstance(resp, dict):
+        if isinstance(resp, dict):
             return resp.get("list", []), resp.get("pageInfo", {}).get("totalRows", 0)
         return [], 0
 
@@ -187,6 +205,9 @@ class NocoDBRestSource(Source):
     def _export_all(self, client: httpx.Client, output_dir: Path) -> dict:
         bases_count = tables_count = records_count = attachments_count = total_size = 0
         manifest = {"version": "1.0", "nocodb_url": self.api_url, "bases": []}
+        # Gaps the export leaves (a failed page, schema or download): reported as
+        # metadata warnings, so the engine degrades the job and alerts.
+        warnings: list[str] = []
 
         for base in self._get_bases(client):
             base_id = base.get("id")
@@ -202,7 +223,12 @@ class NocoDBRestSource(Source):
             meta_file.write_text(json.dumps(base, indent=2))
             total_size += meta_file.stat().st_size
 
-            for table in self._get_tables(client, base_id):
+            try:
+                tables = self._get_tables(client, base_id, warnings)
+            except _RequestFailed as e:
+                warnings.append(f"{base_title}: tables not exported ({e})")
+                tables = []
+            for table in tables:
                 table_id = table.get("id")
                 table_title = table.get("title", "untitled")
                 if not table_id:
@@ -220,7 +246,12 @@ class NocoDBRestSource(Source):
                     all_records: list[dict] = []
                     offset, limit = 0, 1000
                     while True:
-                        recs, total = self._get_table_records(client, table_id, limit, offset)
+                        try:
+                            recs, total = self._get_table_records(client, table_id, limit, offset)
+                        except _RequestFailed as e:
+                            warnings.append(f"{base_title}/{table_title}: records incomplete, "
+                                            f"stopped after {offset} ({e})")
+                            break
                         if not recs:
                             break
                         all_records.extend(recs)
@@ -248,6 +279,9 @@ class NocoDBRestSource(Source):
                                     attachments_count += 1
                                     if target.exists():
                                         total_size += target.stat().st_size
+                                else:
+                                    warnings.append(f"{base_title}/{table_title}: attachment {title} "
+                                                    "not downloaded")
                         table_manifest["attachments_count"] = attachments_count
 
                 base_manifest["tables"].append(table_manifest)
@@ -256,8 +290,11 @@ class NocoDBRestSource(Source):
         manifest_file = output_dir / "manifest.json"
         manifest_file.write_text(json.dumps(manifest, indent=2))
         total_size += manifest_file.stat().st_size
-        return {"bases": bases_count, "tables": tables_count, "records": records_count,
-                "attachments": attachments_count, "total_size": total_size}
+        stats = {"bases": bases_count, "tables": tables_count, "records": records_count,
+                 "attachments": attachments_count, "total_size": total_size}
+        if warnings:
+            stats["warnings"] = _summarize(warnings)
+        return stats
 
     # ── Source contract ──────────────────────────────────────────────────────
     def produce(self, staging_dir: Path) -> list[StagedComponent]:
