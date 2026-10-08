@@ -2,7 +2,7 @@
 #  CS-NocoDB · NocoDB-Backup — meta image on the central BackupHelper engine
 # -----------------------------------------------------------------------------
 #  Thin wrapper: FROM the central BackupHelper engine + the NocoDB extension
-#  plugin. The generic backup logic (pg_dump plain SQL, deterministic tar of the
+#  plugin. The generic backup logic (pg_dump custom format, deterministic tar of the
 #  NocoDB data volume, retention, sha256 manifest, off-site S3, alerting, the
 #  restore CLI, off-site DR hydration) lives in the engine, which ships the
 #  postgres 18 client, a non-root user, tini and a functional healthcheck.

@@ -273,6 +273,9 @@ services:
       # BackupHelper engine config. Non-secret values interpolated by compose from
       # .env; secrets use $${VAR} so the engine/plugin resolves them at runtime from
       # the container env (never written into the rendered config).
+      # dump_format "custom": the engine restores it with pg_restore --clean
+      # --if-exists, which also works over a live database. A "plain" dump is
+      # replayed with psql and stops at the first table that already exists.
       BACKUP_CONFIG_JSON: |
         {
           "instance_name": "${NOCODB_BACKUP_INSTANCE_NAME:-${STACK_NAME:-nocodb}}",
@@ -282,7 +285,7 @@ services:
             "sources": [
               {"type": "postgres", "name": "database", "enabled": ${NOCODB_BACKUP_DATABASE_DUMP:-true},
                "host": "database-server", "port": 5432, "database": "nocodb", "user": "nocodb",
-               "password": "$${DB_PASSWORD}", "ssl_mode": "disable", "dump_format": "plain",
+               "password": "$${DB_PASSWORD}", "ssl_mode": "disable", "dump_format": "custom",
                "timeout": ${NOCODB_BACKUP_DATABASE_DUMP_TIMEOUT:-1800}},
               {"type": "filesystem", "name": "nocodb-data", "enabled": ${NOCODB_BACKUP_INCLUDE_FILES:-true},
                "path": "/nocodb-data"},
