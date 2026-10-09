@@ -383,7 +383,9 @@ Instanz, das Leeren tut also nur frueher, was der Neustart oben auch tut; warten
 Queue (Bull, gleiche Redis-Datenbank) entfallen wie bei jedem Neustart. Schlaegt es fehl
 (Warnung `NocoDB's Redis cache was not emptied`), bleibt der Restore gueltig - dann alle
 Instanzen neu starten. Die `nocodb restore-*`-Befehle schreiben ueber die API und
-brauchen das nicht.
+brauchen das nicht. Den Restore bei laufenden Instanzen samt Leeren des Caches prueft vor
+jedem Release ein eigener CI-Lauf auf dem Cluster-Stack
+([Cluster-Stack](#cluster-stack)).
 
 #### Daten-Dateien wiederherstellen (nach dem Datenbank-Restore)
 
@@ -787,6 +789,34 @@ Release-Workflow aendern. Schlaegt er fehl, nennt die Zusammenfassung des Laufs 
 fehlgeschlagene Phase, und das Artefakt `backup-roundtrip-diagnostics` enthaelt die Logs
 aller Services, `docker compose ps`, die Snapshot-Liste und das Manifest.
 
+#### Cluster-Stack
+
+Der Job `🧪 Backup Round Trip (Cluster)` fuehrt denselben Ablauf auf
+`docker-compose.cluster.yml` aus - HAProxy, `nocodb-server-1` bis `-4` und Redis als
+gemeinsamer Metadaten-Cache - und ist ebenso Voraussetzung fuer das Release. Ueber den Stack
+legt er
+[`tests/backup-roundtrip/cluster/docker-compose.ci.yml`](../tests/backup-roundtrip/cluster/docker-compose.ci.yml),
+die nur aendert, was ein GitHub-Runner ohne Traefik braucht: Compose legt das Proxy-Netz
+selbst an, und Load Balancer und Instanzen veroeffentlichen Port 8080 auf einem zufaelligen
+Loopback-Port. Die Limits der Stufe S verkleinert er per `env-overrides` auf den Runner
+(4 Cores, 16 GB).
+
+| Phase | Unterschied zum Single-Instance-Lauf |
+|-------|--------------------------------------|
+| Seed | Ueber den Load Balancer |
+| Loeschen | Zusaetzlich das Attachment-Feld der Tabelle ueber die Meta-API. Danach haelt das Skript Container und Startzeit jeder Instanz fest und setzt einen Schluessel in der Redis-Datenbank der Instanzen |
+| Restore | Keine Instanz wird gestoppt: `restore <id> --force` laeuft, waehrend alle vier weiter ausliefern - der Fall, fuer den der Sidecar danach den Redis-Cache leert |
+| Pruefung | Jede Instanz direkt auf ihrem eigenen Port: Feld, Datensatz und beide Attachments mit Inhalt; dazu die ganze Single-Instance-Pruefung ueber den Load Balancer. Nach dem Restore ausserdem: keine Instanz neu gestartet, der Redis-Schluessel ist weg |
+
+Warum das Feld: NocoDB liest die Spaltenliste einer Tabelle aus dem Redis-Cache und fragt
+die Datenbank nur, wenn dort keine liegt. Nach dem Restore steht das Feld wieder in der
+Datenbank, laufende Instanzen liefern es aber erst aus, wenn der Cache geleert ist. Warum
+kein Neustart sein darf: NocoDB leert denselben Cache beim Start jeder Instanz und wuerde
+verdecken, ob der Sidecar es getan hat. Den dokumentierten Weg mit gestoppten Instanzen
+(siehe [Datenbank wiederherstellen](#datenbank-wiederherstellen)) deckt dieser Lauf deshalb
+nicht ab. Schlaegt er fehl, enthaelt das Artefakt `backup-roundtrip-cluster-diagnostics`
+die Logs aller Services.
+
 ### Referenzen
 
 - [NocoDB API Dokumentation](https://meta-apis-v2.nocodb.com/)
@@ -1165,7 +1195,9 @@ same database whenever an instance starts anyway, so the flush only does earlier
 restart above does too; jobs waiting in the queue (Bull, same Redis database) are dropped
 as on every restart. If it fails (warning `NocoDB's Redis cache was not emptied`), the
 restore stands - restart all instances then. The `nocodb restore-*` commands write
-through the API and do not need it.
+through the API and do not need it. A CI run of its own on the cluster stack checks the
+restore over running instances, cache flush included, before every release
+([Cluster Stack](#cluster-stack-1)).
 
 #### Restore Data Files (after the database restore)
 
@@ -1565,6 +1597,32 @@ requests that touch `src/`, a compose file, `.env.example`, the round-trip scrip
 release workflow. When it fails, the run's summary names the failed phase, and the
 `backup-roundtrip-diagnostics` artifact holds every service's log, `docker compose ps`,
 the snapshot list and the manifest.
+
+#### Cluster Stack
+
+The job `🧪 Backup Round Trip (Cluster)` runs the same cycle on the cluster stack,
+`docker-compose.cluster.yml` - HAProxy, `nocodb-server-1` to `-4` and Redis as their
+shared metadata cache - and gates the release as well. It merges
+[`tests/backup-roundtrip/cluster/docker-compose.ci.yml`](../tests/backup-roundtrip/cluster/docker-compose.ci.yml)
+over the stack, which changes only what a GitHub runner without Traefik needs: Compose
+creates the proxy network itself, and the load balancer and every instance publish port
+8080 on a random loopback port. Its `env-overrides` scale the stage S limits down to the
+runner (4 cores, 16 GB).
+
+| Phase | Difference from the single-instance run |
+|-------|-----------------------------------------|
+| Seed | Through the load balancer |
+| Delete | Also the table's attachment field, through the meta API. Then it records every instance's container and start time and sets a key in the instances' Redis database |
+| Restore | No instance is stopped: `restore <id> --force` runs while all four keep serving - the case the sidecar empties the Redis cache for afterwards |
+| Check | Every instance directly on its own port: the field, the record and both attachments with their content; plus the whole single-instance check through the load balancer. After the restore also: no instance restarted, the Redis key is gone |
+
+Why the field: NocoDB reads a table's column list from the Redis cache and asks the
+database only when none is cached. After the restore the field is back in the database, but
+running instances serve it only once the cache has been emptied. Why no restart is allowed:
+NocoDB empties the same cache whenever an instance starts, which would hide whether the
+sidecar did. For the same reason this run does not cover the documented path with stopped
+instances (see [Restore Database](#restore-database)). When it fails, the
+`backup-roundtrip-cluster-diagnostics` artifact holds every service's log.
 
 ### References
 
