@@ -6,9 +6,10 @@
 #
 #   database     a base, a table and a record whose Marker field holds the
 #                run's marker (PostgreSQL dump)
-#   nocodb-data  a text attachment on that record, stored by NocoDB's Local
-#                storage adapter on the data volume (file archive)
-#   nocodb       the record and its attachment as the sidecar's REST export
+#   nocodb-data  two text attachments with the same name on that record,
+#                stored by NocoDB's Local storage adapter on the data volume
+#                (file archive)
+#   nocodb       the record and its attachments as the sidecar's REST export
 #                sees them
 #
 # The REST export needs an API token, which only exists once a user does. The
@@ -52,7 +53,7 @@ docker compose up -d --no-deps --wait --wait-timeout 300 "$ROUNDTRIP_BACKUP_SERV
 [ "$(sidecar_token)" = "$NC_TOKEN" ] || { echo "the sidecar did not pick up the API token" >&2; exit 1; }
 echo "API token created and handed to $ROUNDTRIP_BACKUP_SERVICE"
 
-# -- base, table, attachment, record ---------------------------------------------
+# -- base, table, attachments, record --------------------------------------------
 BASE_ID=$(jq -n --arg title "$BASE_TITLE" '{$title}' \
   | nc_api POST /api/v2/meta/bases -H 'Content-Type: application/json' --data-binary @- \
   | jq -er '.id')
@@ -65,14 +66,18 @@ TABLE_ID=$(jq -n --arg title "$TABLE_TITLE" '{$title, table_name: $title, column
 
 UPLOAD=$(mktemp)
 trap 'rm -f "$UPLOAD"' EXIT
-printf '%s' "$ATTACHMENT_CONTENT" > "$UPLOAD"
-ATTACHMENT=$(nc_api POST /api/v2/storage/upload -F "files=@${UPLOAD};filename=${ATTACHMENT_NAME};type=text/plain" \
-  | jq -ec 'if type == "array" and length == 1 then .[0] else error("unexpected upload response") end')
+ATTACHMENTS='[]'
+for content in "${ATTACHMENT_CONTENTS[@]}"; do
+  printf '%s' "$content" > "$UPLOAD"
+  ATTACHMENT=$(nc_api POST /api/v2/storage/upload -F "files=@${UPLOAD};filename=${ATTACHMENT_NAME};type=text/plain" \
+    | jq -ec 'if type == "array" and length == 1 then .[0] else error("unexpected upload response") end')
+  ATTACHMENTS=$(jq -c --argjson attachment "$ATTACHMENT" '. + [$attachment]' <<< "$ATTACHMENTS")
+done
 
-RECORD_ID=$(jq -n --arg marker "$ROUNDTRIP_MARKER" --argjson attachment "$ATTACHMENT" \
-    '[{Marker: $marker, Files: [$attachment]}]' \
+RECORD_ID=$(jq -n --arg marker "$ROUNDTRIP_MARKER" --argjson files "$ATTACHMENTS" \
+    '[{Marker: $marker, Files: $files}]' \
   | nc_api POST "/api/v2/tables/${TABLE_ID}/records" -H 'Content-Type: application/json' --data-binary @- \
   | jq -er 'if type == "array" then .[0].Id else .Id end')
 
-echo "seeded base $BASE_ID, table $TABLE_ID, record $RECORD_ID with attachment:"
+echo "seeded base $BASE_ID, table $TABLE_ID, record $RECORD_ID with attachments:"
 marker_files
