@@ -825,6 +825,39 @@ der drei Images, 48 s bis der Cluster laeuft, 32 s fuer den Seed samt Neustart, 
 fuer Backup, Restore und Pruefungen. Schlaegt er fehl, enthaelt das Artefakt
 `backup-roundtrip-cluster-diagnostics` die Logs aller Services.
 
+#### Upgrade und neuer Host (S3)
+
+Betreiber installieren nicht frisch: Sie betreiben das letzte Release mit dessen Daten und
+Snapshots, aktualisieren es und muessen nach dem Verlust eines Hosts aus der Off-Site-Kopie
+wiederherstellen koennen. Die Jobs `🧪 Backup Round Trip (upgrade, S3, <Variante>)` und
+`🧪 Backup Round Trip (Cluster, upgrade, S3)` pruefen genau diesen Weg und sind ebenso
+Voraussetzung fuer das Release - einmal je Compose-Datei, die Betreiber einsetzen: `local`,
+`traefik`, `traefik-local`, `traefik-header-auth` und der Cluster-Stack (mit den
+Einstellungen und Skripten des Cluster-Laufs oben).
+
+| Phase | Was passiert |
+|-------|--------------|
+| Start | Das neueste Release startet - Tag `vX.Y.Z`, Images `nocodb`, `nocodb-init` und `nocodb-backup` mit Tag `X.Y.Z` -, daneben ein Wegwerf-MinIO, dessen Endpoint, Bucket und generierte Zugangsdaten in `NOCODB_BACKUP_S3_ENDPOINT_URL`, `NOCODB_BACKUP_S3_BUCKET`, `NOCODB_BACKUP_S3_ACCESS_KEY` und `NOCODB_BACKUP_S3_SECRET_KEY` landen |
+| Seed, Backup | Wie oben, mit dem Sidecar des Releases; Archiv und Manifest muessen danach im Bucket liegen |
+| Upgrade | Die aus dem Commit gebauten Images uebernehmen die Image-Referenzen, `docker compose up -d` erstellt die Container neu - wie bei einem Betreiber nach `docker compose pull`. Der Datensatz muss danach vollstaendig da sein, `backuphelper healthcheck` muss im neuen Sidecar mit dem Snapshot des alten bestehen |
+| Neuer Host | Nach dem Loeschen werden Container und Daten-Volume des Sidecars geleert; `list` darf den Snapshot nur noch als off-site zeigen |
+| Restore | Der neue Sidecar holt den alten Snapshot aus dem Bucket und spielt ihn ein; danach die volle Pruefung wie oben, auch des REST-Exports im heruntergeladenen Snapshot |
+
+Die Traefik-Dateien treten dem externen Proxy-Netz `PROXY_NETWORK` bei, das der Lauf anlegt
+(`external-networks: 'auto'`). Traefik selbst laeuft nicht: Labels, Routing und TLS sind
+nicht Teil des Tests, alles dahinter schon. Diese Dateien veroeffentlichen keinen Port, die
+Skripte rufen die REST-API aber vom Runner aus auf - deshalb legt
+[`tests/backup-roundtrip/docker-compose.ci.yml`](../tests/backup-roundtrip/docker-compose.ci.yml)
+nur einen Loopback-Port fuer `nocodb-server` darueber.
+
+Ein Release existiert ein paar Minuten, bevor seine Images veroeffentlicht sind. Ein Lauf in
+diesem Fenster - oder nach einem fehlgeschlagenen Image-Job - scheitert bei *Pull Previous
+Release*; dann den Image-Job des Releases erneut ausfuehren (oder abwarten) und den Lauf
+wiederholen. Gemessen dauerte ein Lauf 2 min 51 s bis 3 min 6 s je Variante und 3 min 29 s
+auf dem Cluster-Stack, parallel zu den frischen Laeufen. Schlaegt einer fehl, enthaelt das
+Artefakt `backup-roundtrip-upgrade-<Variante>-diagnostics` bzw.
+`backup-roundtrip-cluster-upgrade-diagnostics` die Logs aller Services.
+
 ### Referenzen
 
 - [NocoDB API Dokumentation](https://meta-apis-v2.nocodb.com/)
@@ -1639,6 +1672,38 @@ A run took 2 min 44 s as measured, in parallel with the single-instance run: 45 
 the three images, 48 s until the cluster is up, 32 s for the seed with its restart, the
 rest for backup, restore and checks. When it fails, the
 `backup-roundtrip-cluster-diagnostics` artifact holds every service's log.
+
+#### Upgrade and New Host (S3)
+
+Operators do not install fresh: they run the latest release with its data and snapshots,
+upgrade it, and must be able to restore from the off-site copy after losing a host. The
+jobs `🧪 Backup Round Trip (upgrade, S3, <variant>)` and
+`🧪 Backup Round Trip (Cluster, upgrade, S3)` test exactly that path and gate the release
+as well - once per compose file operators deploy: `local`, `traefik`, `traefik-local`,
+`traefik-header-auth` and the cluster stack (with the settings and scripts of the cluster
+run above).
+
+| Phase | What happens |
+|-------|--------------|
+| Start | The latest release starts - tag `vX.Y.Z`, images `nocodb`, `nocodb-init` and `nocodb-backup` tagged `X.Y.Z` - next to a throwaway MinIO whose endpoint, bucket and generated credentials go into `NOCODB_BACKUP_S3_ENDPOINT_URL`, `NOCODB_BACKUP_S3_BUCKET`, `NOCODB_BACKUP_S3_ACCESS_KEY` and `NOCODB_BACKUP_S3_SECRET_KEY` |
+| Seed, back up | As above, with the release's sidecar; archive and manifest must then be in the bucket |
+| Upgrade | The images built from the commit take over the image references and `docker compose up -d` recreates the containers - as for an operator after `docker compose pull`. The record must then be complete, and `backuphelper healthcheck` must pass in the new sidecar with the old one's snapshot |
+| New host | After the deletion the sidecar's container and data volume are wiped; `list` must show the snapshot as off-site only |
+| Restore | The new sidecar fetches the old snapshot from the bucket and restores it; then the full check as above, including the REST export in the downloaded snapshot |
+
+The Traefik files join the external proxy network `PROXY_NETWORK`, which the run creates
+(`external-networks: 'auto'`). Traefik itself does not run: labels, routing and TLS are not
+tested, everything behind them is. These files publish no port, but the scripts call the
+REST API from the runner - so
+[`tests/backup-roundtrip/docker-compose.ci.yml`](../tests/backup-roundtrip/docker-compose.ci.yml)
+adds only a loopback port for `nocodb-server`.
+
+A release exists a few minutes before its images are published. A run inside that window -
+or after a failed image job - fails at *Pull Previous Release*; re-run the release's image
+job (or wait for it) and re-run the round trip. As measured, a run took 2 min 51 s to
+3 min 6 s per variant and 3 min 29 s on the cluster stack, in parallel with the fresh runs.
+When one fails, the `backup-roundtrip-upgrade-<variant>-diagnostics` or
+`backup-roundtrip-cluster-upgrade-diagnostics` artifact holds every service's log.
 
 ### References
 
