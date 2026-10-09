@@ -807,7 +807,7 @@ Loopback-Port. Die Limits der Stufe S verkleinert er per `env-overrides` auf den
 
 | Phase | Unterschied zum Single-Instance-Lauf |
 |-------|--------------------------------------|
-| Seed | Ueber den Load Balancer |
+| Seed | Ueber `nocodb-server-1` direkt, danach starten die uebrigen Instanzen einmal neu - wie nach dem ersten Benutzer jeder neuen Cluster-Installation (README, Cluster Mode) |
 | Loeschen | Zusaetzlich das Attachment-Feld der Tabelle ueber die Meta-API. Danach haelt das Skript Container und Startzeit jeder Instanz fest und setzt einen Schluessel in der Redis-Datenbank der Instanzen |
 | Restore | Keine Instanz wird gestoppt: `restore <id> --force` laeuft, waehrend alle vier weiter ausliefern - der Fall, fuer den der Sidecar danach den Redis-Cache leert |
 | Pruefung | Jede Instanz direkt auf ihrem eigenen Port: Feld, Datensatz und beide Attachments mit Inhalt; dazu die ganze Single-Instance-Pruefung ueber den Load Balancer. Nach dem Restore ausserdem: keine Instanz neu gestartet, der Redis-Schluessel ist weg |
@@ -1619,7 +1619,7 @@ runner (4 cores, 16 GB).
 
 | Phase | Difference from the single-instance run |
 |-------|-----------------------------------------|
-| Seed | Through the load balancer |
+| Seed | Through `nocodb-server-1` directly, then the other instances restart once - as after the first user of every new cluster installation (README, cluster mode) |
 | Delete | Also the table's attachment field, through the meta API. Then it records every instance's container and start time and sets a key in the instances' Redis database |
 | Restore | No instance is stopped: `restore <id> --force` runs while all four keep serving - the case the sidecar empties the Redis cache for afterwards |
 | Check | Every instance directly on its own port: the field, the record and both attachments with their content; plus the whole single-instance check through the load balancer. After the restore also: no instance restarted, the Redis key is gone |
