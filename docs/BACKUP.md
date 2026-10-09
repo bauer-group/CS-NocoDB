@@ -105,9 +105,19 @@ Strukturierter Export ueber die NocoDB REST API:
 │           └── tables/{table_name}/
 │               ├── schema.json         # Table Schema
 │               ├── records.json.gz     # Alle Records (gzip-komprimiert)
+│               ├── attachments.json    # Welche Datei zu welchem Attachment gehoert
 │               └── attachments/{field}/{filename}
 └── 2024-02-05_05-15-00.manifest.json   # Manifest: Komponenten, Groessen, sha256
 ```
+
+Die Dateien heissen wie der Titel des Attachments. Gleiche Titel in einem Feld (zwei
+Records mit je einer `invoice.pdf`) bekommen eigene Dateien (`invoice.pdf`,
+`invoice (2).pdf`), und `attachments.json` haelt je Feld fest, welche gespeicherte Datei
+(`path` bzw. `url` in NocoDB) in welcher Datei liegt. Eine Datei, auf die mehrere Zellen
+verweisen, wird einmal gesichert. In aelteren Exporten ohne `attachments.json`
+ueberschrieben sich gleichnamige Attachments eines Feldes: Dort ist nur das zuletzt
+gesicherte erhalten, und `restore-attachments` verknuepft es mit allen Attachments
+dieses Titels.
 
 Snapshots von vor dem Wechsel auf das Custom-Format enthalten stattdessen
 `database.sql.gz` (Plain-SQL) - siehe [Datenbank wiederherstellen](#datenbank-wiederherstellen).
@@ -432,6 +442,9 @@ docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-attachments 2024-02
 **Hinweis:** Dieser Befehl ist für die Verwendung nach `restore-dump` gedacht.
 Die Records existieren bereits in der Datenbank mit ihren Original-IDs.
 Attachments werden via NocoDB Storage API hochgeladen und mit den bestehenden Records verknuepft.
+Jedes Attachment bekommt die Datei, die der Export fuer genau dieses Attachment gesichert
+hat (`attachments.json`), mit seinem urspruenglichen Titel - auch wenn sich Titel wiederholen.
+Das gilt ebenso fuer `restore-records --with-attachments`.
 
 ### Wiederherstellung
 
@@ -845,9 +858,18 @@ Structured export via the NocoDB REST API:
 │           └── tables/{table_name}/
 │               ├── schema.json         # Table schema
 │               ├── records.json.gz     # All records (gzip compressed)
+│               ├── attachments.json    # Which file belongs to which attachment
 │               └── attachments/{field}/{filename}
 └── 2024-02-05_05-15-00.manifest.json   # Manifest: components, sizes, sha256
 ```
+
+Files are named after the attachment's title. Equal titles in one field (two records
+with an `invoice.pdf` each) get files of their own (`invoice.pdf`, `invoice (2).pdf`),
+and `attachments.json` records per field which stored file (`path` or `url` in NocoDB)
+went into which file. A file that several cells reference is backed up once. In older
+exports without `attachments.json`, attachments of one field with the same title
+overwrote each other: only the one saved last is there, and `restore-attachments` links
+it to every attachment with that title.
 
 Snapshots taken before the switch to the custom format hold `database.sql.gz`
 (plain SQL) instead - see [Restore Database](#restore-database).
@@ -1170,6 +1192,9 @@ docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-attachments 2024-02
 **Note:** This command is intended for use after `restore-dump`.
 Records already exist in the database with their original IDs.
 Attachments are uploaded via the NocoDB Storage API and linked to existing records.
+Every attachment gets the file the export saved for exactly that attachment
+(`attachments.json`), with its original title - also where titles repeat. The same
+applies to `restore-records --with-attachments`.
 
 ### Recovery Scenarios
 

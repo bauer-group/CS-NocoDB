@@ -10,8 +10,9 @@ restore-attachments``. Ported 1:1 from the bespoke ``cli.py``:
 * restore-records     — batched (100) record re-insert, strips system fields,
                         optional attachment re-upload + relink.
 * restore-attachments — standalone attachment re-upload after a DB restore,
-                        matching records by their original id, with the 4-strategy
-                        backup-file finder.
+                        matching records by their original id. The file of each
+                        attachment comes from the export's attachments.json;
+                        snapshots without it use the 4-strategy file finder.
 
 The two *generic* restore paths the bespoke also had — the raw pg_dump restore
 and the data-file extract — are provided by the engine itself:
@@ -34,7 +35,8 @@ import httpx
 import typer
 
 from ._snapshot import SnapshotError, open_export
-from .rest_source import _sanitize_filename  # shared with the exporter — must match
+# shared with the exporter — must match
+from .rest_source import ATTACHMENT_INDEX, _attachment_key, _sanitize_filename
 
 app = typer.Typer(
     name="nocodb",
@@ -114,12 +116,14 @@ def _get_attachment_fields(schema: dict) -> list[str]:
     return [f["title"] for f in schema.get("columns", []) if f.get("uidt") == "Attachment"]
 
 
-def _upload_attachment(client: httpx.Client, file_path: Path, storage_path: str = "") -> Optional[list[dict]]:
+def _upload_attachment(client: httpx.Client, file_path: Path, storage_path: str = "",
+                       name: str = "") -> Optional[list[dict]]:
+    """Upload a file; NocoDB takes ``name`` (default: the file's own) as title."""
     try:
         with open(file_path, "rb") as f:
             resp = client.post(
                 "/api/v2/storage/upload",
-                files={"files": (file_path.name, f)},
+                files={"files": (name or file_path.name, f)},
                 params={"path": storage_path} if storage_path else {},
             )
             resp.raise_for_status()
@@ -129,10 +133,34 @@ def _upload_attachment(client: httpx.Client, file_path: Path, storage_path: str 
         return None
 
 
-def _find_backup_file(attachments_dir: Path, field_name: str, attachment_info: dict) -> Optional[Path]:
-    """Find an attachment file in the backup dir via 4 fallback strategies, since
-    URLs/paths differ between environments."""
+def _load_attachment_index(table_dir: Path) -> Optional[dict[str, dict]]:
+    """The export's attachments.json as {field title: {attachment key: file
+    name}}, or None for a snapshot taken before the export wrote it."""
+    index_file = table_dir / ATTACHMENT_INDEX
+    if not index_file.exists():
+        return None
+    data = json.loads(index_file.read_text())
+    fields = data.get("fields") if isinstance(data, dict) else None
+    if not isinstance(fields, dict) or not all(isinstance(v, dict) for v in fields.values()):
+        raise ValueError("unexpected layout")
+    return fields
+
+
+def _find_backup_file(attachments_dir: Path, field_name: str, attachment_info: dict,
+                      index: Optional[dict[str, dict]] = None) -> Optional[Path]:
+    """Find the backed-up file of an attachment.
+
+    With the export's index it is exactly the file stored for this attachment,
+    or none when its download failed - never a guess, which could hand over
+    another attachment with the same title. Snapshots without an index fall
+    back to 4 strategies, since URLs/paths differ between environments."""
     field_dir = attachments_dir / _sanitize_filename(field_name)
+    if index is not None:
+        name = index.get(field_name, {}).get(_attachment_key(attachment_info))
+        if not isinstance(name, str) or name in ("", ".", "..") or "/" in name or "\\" in name:
+            return None
+        target = field_dir / name
+        return target if target.is_file() else None
     if not field_dir.exists():
         return None
 
@@ -178,6 +206,11 @@ def _restore_attachments_for_table(
     attachments_dir = table_dir / "attachments"
     if not attachments_dir.exists():
         return 0, 0
+    try:
+        index = _load_attachment_index(table_dir)
+    except (OSError, ValueError) as e:
+        typer.echo(f"    ! {ATTACHMENT_INDEX} unreadable ({e}) - attachments of this table skipped")
+        return 0, 1
 
     uploaded = errors = 0
     for idx, record in enumerate(records):
@@ -194,10 +227,13 @@ def _restore_attachments_for_table(
             for att_info in field_value:
                 if not isinstance(att_info, dict):
                     continue
-                backup_file = _find_backup_file(attachments_dir, field_name, att_info)
+                backup_file = _find_backup_file(attachments_dir, field_name, att_info, index)
                 if not backup_file:
                     continue
-                result = _upload_attachment(upload_client, backup_file, storage_path)
+                # The original title: the file name may carry a " (2)" suffix.
+                title = _sanitize_filename(att_info.get("title") or "")
+                result = _upload_attachment(upload_client, backup_file, storage_path,
+                                            title if title.strip(".") else "")
                 if result and len(result) > 0:
                     new_attachments.append(result[0])
                     uploaded += 1
@@ -546,6 +582,7 @@ def restore_attachments(
 
     Matches records by their original id (preserved by the pg_dump restore) and
     overwrites their attachment references with the freshly uploaded files.
+    Every attachment gets its own backed-up file, also where titles repeat.
     """
     _require_base_for_table(base, table)
     api_url, token = _api()

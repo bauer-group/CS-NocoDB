@@ -15,8 +15,14 @@ Captures the NocoDB REST-API export as a single snapshot component:
 - paginates `GET /api/v2/tables/{id}/records` (1000/page)
 - downloads attachment binaries referenced by `Attachment` columns
 - writes a portable, self-describing tree (`bases/<base>/tables/<table>/{schema.json,
-  records.json.gz, attachments/…}` + a top-level `manifest.json`), tarred into the
-  snapshot as `nocodb.tar.gz`.
+  records.json.gz, attachments.json, attachments/<field>/<file>}` + a top-level
+  `manifest.json`), tarred into the snapshot as `nocodb.tar.gz`.
+
+Attachment files are named after the attachment title; a repeated title in a field
+gets a numbered name (`invoice.pdf`, `invoice (2).pdf`). `attachments.json` maps each
+stored attachment (its NocoDB `path`, else `url`) to its file, and the restore reads
+it, so every record gets its own file back. A stored file referenced by several cells
+is downloaded once. The manifest's `attachments_count` counts a table's own files.
 
 Config (in `BACKUP_CONFIG_JSON`, secrets via `${VAR}`):
 
@@ -48,7 +54,7 @@ Mounted under the engine CLI as `backuphelper nocodb …`:
 | --- | --- |
 | `restore-schema <id>` | recreate bases + tables from the export (schema-aware: skips system/virtual/pk columns, carries Select options into `dtxp`). `--base/--table/--skip-existing/--force` |
 | `restore-records <id>` | batched (100) record re-insert into existing tables, strips system fields. `--base/--table/--with-attachments/--force` |
-| `restore-attachments <id>` | re-upload + relink attachments onto existing records, matched by original id (4-strategy file finder). `--base/--table/--force` |
+| `restore-attachments <id>` | re-upload + relink attachments onto existing records, matched by original id. Files come from `attachments.json`; exports without it fall back to a 4-strategy file finder. `--base/--table/--force` |
 
 The **generic** halves of the old bespoke restore live in the engine:
 

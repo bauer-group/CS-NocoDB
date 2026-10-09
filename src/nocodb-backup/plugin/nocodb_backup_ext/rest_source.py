@@ -30,6 +30,10 @@ log = logging.getLogger("backuphelper.plugin.nocodb")
 _MAX_REDIRECTS = 5
 # Warnings kept in the component metadata; the rest is counted.
 _MAX_WARNINGS = 20
+# Longest file name the export writes.
+_MAX_NAME = 100
+# Per table: which file below attachments/<field>/ holds which stored attachment.
+ATTACHMENT_INDEX = "attachments.json"
 
 
 class _RequestFailed(Exception):
@@ -55,7 +59,28 @@ def _sanitize_filename(name: str) -> str:
     safe = name.replace("/", "_").replace("\\", "_").replace(":", "_")
     safe = safe.replace("<", "_").replace(">", "_").replace('"', "_")
     safe = safe.replace("|", "_").replace("?", "_").replace("*", "_")
-    return safe[:100]
+    return safe[:_MAX_NAME]
+
+
+def _unique_name(name: str, taken: set[str]) -> str:
+    """``name``, or "name (2).ext", "name (3).ext", ... while another file of
+    the same directory (``taken``) already has it - within _MAX_NAME characters.
+    NocoDB keeps the uploaded file name as the attachment title, so two records
+    each holding an "invoice.pdf" are common."""
+    if name in ("", ".", ".."):
+        name = "attachment"
+    if name not in taken:
+        return name
+    dot = name.rfind(".")
+    stem, ext = (name[:dot], name[dot:]) if dot > 0 else (name, "")
+    n = 2
+    while True:
+        marker = f" ({n})"
+        room = _MAX_NAME - len(marker) - len(ext)
+        candidate = f"{stem[:room]}{marker}{ext}" if room > 0 else f"{name[:_MAX_NAME - len(marker)]}{marker}"
+        if candidate not in taken:
+            return candidate
+        n += 1
 
 
 def _attachment_link(att: dict) -> str | None:
@@ -70,6 +95,14 @@ def _attachment_link(att: dict) -> str | None:
         if isinstance(value, str) and value:
             return value
     return None
+
+
+def _attachment_key(att: dict) -> str:
+    """What identifies the stored file behind an attachment cell: its ``path``
+    (Local storage) or ``url`` (object storage), else its download link. Cells
+    with the same key reference the same file. The export's attachments.json is
+    keyed by it, and the restore reads it from the same records.json.gz."""
+    return att.get("path") or att.get("url") or _attachment_link(att) or ""
 
 
 class NocoDBRestSource(Source):
@@ -196,10 +229,48 @@ class NocoDBRestSource(Source):
                         if link:
                             attachments.append({
                                 "url": att.get("url"), "path": att.get("path"), "link": link,
+                                "key": _attachment_key(att),
                                 "title": att.get("title", ""), "mimetype": att.get("mimetype", ""),
                                 "size": att.get("size", 0), "field": field_name,
                             })
         return attachments
+
+    def _export_attachments(self, client: httpx.Client, records: list[dict], fields: list[dict],
+                            table_dir: Path, label: str, warnings: list[str]) -> tuple[int, int]:
+        """Download a table's attachments to attachments/<field>/<name> and
+        return (files, bytes).
+
+        The file name is the attachment title, which does not identify a file:
+        a second "invoice.pdf" in the field becomes "invoice (2).pdf". The
+        table's attachments.json maps each stored attachment (_attachment_key)
+        to its file, so the restore links every cell to its own file. A stored
+        file that several cells reference is downloaded once."""
+        index: dict[str, dict[str, str]] = {}  # field title -> {attachment key: file name}
+        taken: dict[str, set[str]] = {}  # field directory -> file names in use
+        seen: set[tuple[str, str]] = set()
+        files = size = 0
+        for att in self._extract_attachments(records, fields):
+            field, key = att["field"], att["key"]
+            if (field, key) in seen:
+                continue
+            seen.add((field, key))
+            title = att.get("title") or key.split("/")[-1].split("?")[0]
+            field_dir = _sanitize_filename(field)
+            names = taken.setdefault(field_dir, set())
+            name = _unique_name(_sanitize_filename(title), names)
+            target = table_dir / "attachments" / field_dir / name
+            if not self._download_file(client, att["link"], target):
+                warnings.append(f"{label}: attachment {title} not downloaded")
+                continue
+            names.add(name)
+            index.setdefault(field, {})[key] = name
+            files += 1
+            size += target.stat().st_size
+        if index:
+            index_file = table_dir / ATTACHMENT_INDEX
+            index_file.write_text(json.dumps({"version": 1, "fields": index}, indent=2))
+            size += index_file.stat().st_size
+        return files, size
 
     # ── export (ported export_all) ───────────────────────────────────────────
     def _export_all(self, client: httpx.Client, output_dir: Path) -> dict:
@@ -268,23 +339,12 @@ class NocoDBRestSource(Source):
                     total_size += records_file.stat().st_size
 
                     if self.include_attachments:
-                        fields = table.get("columns", [])
-                        table_attachments = 0
-                        for att in self._extract_attachments(all_records, fields):
-                            stored = att.get("path") or att.get("url") or ""
-                            title = att.get("title") or stored.split("/")[-1].split("?")[0]
-                            if title:
-                                field_dir = table_dir / "attachments" / _sanitize_filename(att.get("field", "unknown"))
-                                target = field_dir / _sanitize_filename(title)
-                                if self._download_file(client, att["link"], target):
-                                    table_attachments += 1
-                                    if target.exists():
-                                        total_size += target.stat().st_size
-                                else:
-                                    warnings.append(f"{base_title}/{table_title}: attachment {title} "
-                                                    "not downloaded")
-                        attachments_count += table_attachments
-                        table_manifest["attachments_count"] = table_attachments
+                        files, size = self._export_attachments(
+                            client, all_records, table.get("columns", []), table_dir,
+                            f"{base_title}/{table_title}", warnings)
+                        attachments_count += files
+                        total_size += size
+                        table_manifest["attachments_count"] = files
 
                 base_manifest["tables"].append(table_manifest)
             manifest["bases"].append(base_manifest)
