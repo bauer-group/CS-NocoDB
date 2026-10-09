@@ -1,0 +1,18 @@
+# =============================================================================
+# CS-NocoDB backup round trip - CI override for the Traefik variants
+# =============================================================================
+# The upgrade round trip in .github/workflows/docker-release.yml merges this
+# file over docker-compose.traefik.yml, docker-compose.traefik-local.yml and
+# docker-compose.traefik-header-auth.yml (compose-files). Those files publish
+# no port - Traefik reaches NocoDB over the proxy network - but the scripts in
+# this directory call NocoDB's REST API from the runner
+# ('docker compose port nocodb-server 8080'). This file only adds that port,
+# on a random loopback port; everything else stays exactly as deployed,
+# including the external proxy network, which the module creates for the run
+# (external-networks: 'auto'). docker-compose.local.yml publishes the port
+# itself and runs without this file.
+# =============================================================================
+
+services:
+  nocodb-server:
+    ports: ["127.0.0.1::8080"]

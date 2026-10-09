@@ -60,10 +60,12 @@ jobs:
   # Builds all three images from this commit, starts the local stack with the
   # backup profile, seeds a record with an attachment through NocoDB, backs it
   # up, deletes it, restores the snapshot and checks that NocoDB has it back.
-  # Every release rebuilds the images FROM the newest NocoDB and BackupHelper
-  # bases - also the one the base image monitor dispatches - so this runs on
-  # every push, dispatch and relevant PR. Docs-only pushes never reach it
-  # (paths-ignore).
+  # The cluster job does the same on the cluster stack, the two upgrade jobs
+  # further below as an upgrade from the latest release with an off-site
+  # copy; the release needs all of them. Every release rebuilds the images
+  # FROM the newest NocoDB and BackupHelper bases - also the one the base
+  # image monitor dispatches - so they run on every push, dispatch and
+  # relevant PR. Docs-only pushes never reach them (paths-ignore).
 
   backup-roundtrip:
     name: 🧪 Backup Round Trip
@@ -168,19 +170,151 @@ jobs:
       artifact-name: 'backup-roundtrip-cluster-diagnostics'
     secrets: inherit
 
+  # The way production gets there, once per compose variant operators deploy:
+  # the latest release (all three images) starts, seeds a record with its
+  # attachments and backs it up - also to an S3 bucket (a throwaway MinIO).
+  # Then the stack is upgraded to the images built from this commit like an
+  # operator does (images switched, compose up -d); the record must survive
+  # it and the new sidecar must be healthy with the old snapshot. The record
+  # is deleted, the sidecar's data volume is wiped like on a new host, and
+  # the new sidecar restores the old snapshot from S3. The Traefik files join
+  # the external proxy network, which is created for the run; they publish
+  # no port, so tests/backup-roundtrip/docker-compose.ci.yml adds a loopback
+  # one for the scripts.
+  backup-roundtrip-upgrade:
+    name: 🧪 Backup Round Trip (upgrade, S3, ${{ matrix.variant }})
+    needs: [validate-compose, validate-scripts]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: local
+            compose-files: '["docker-compose.local.yml"]'
+          - variant: traefik
+            compose-files: '["docker-compose.traefik.yml", "tests/backup-roundtrip/docker-compose.ci.yml"]'
+          - variant: traefik-local
+            compose-files: '["docker-compose.traefik-local.yml", "tests/backup-roundtrip/docker-compose.ci.yml"]'
+          - variant: traefik-header-auth
+            compose-files: '["docker-compose.traefik-header-auth.yml", "tests/backup-roundtrip/docker-compose.ci.yml"]'
+    permissions:
+      contents: read
+      packages: read
+    uses: bauer-group/automation-templates/.github/workflows/modules-backup-roundtrip-test.yml@main
+    with:
+      compose-files: ${{ matrix.compose-files }}
+      profiles: 'backup'
+      # As in the fresh round trip above.
+      env-overrides: |
+        STACK_NAME=nocodb_roundtrip
+        NC_SITE_URL=http://localhost:8080
+        PG_SHARED_BUFFERS=256MB
+        PG_EFFECTIVE_CACHE_SIZE=1GB
+        PG_MAINTENANCE_WORK_MEM=64MB
+        SMTP_HOST=
+        NOCODB_BACKUP_SCHEDULE_MODE=interval
+        NOCODB_BACKUP_SCHEDULE_INTERVAL_HOURS=24
+      generated-secrets: 'DATABASE_PASSWORD NC_AUTH_JWT_SECRET'
+      build-images: |
+        [
+          {"service": "nocodb-server", "context": "src/nocodb"},
+          {"service": "nocodb-init", "context": "src/nocodb-init"},
+          {"service": "nocodb-backup", "context": "src/nocodb-backup"}
+        ]
+      backup-service: 'nocodb-backup'
+      require-components: 'database nocodb-data nocodb'
+      services-to-stop-before-restore: 'nocodb-server'
+      seed-script: 'tests/backup-roundtrip/seed.sh'
+      mutate-script: 'tests/backup-roundtrip/mutate.sh'
+      check-script: 'tests/backup-roundtrip/check.sh'
+      # All three images start as the latest release (vX.Y.Z -> image tag
+      # X.Y.Z) and are upgraded to this commit's builds.
+      upgrade-from: 'latest-release'
+      # setting VARIABLE: the .env variables the compose files build the S3
+      # destination from. The region keeps its default (eu-north-1), which
+      # MinIO accepts; keep_local stays true (NOCODB_BACKUP_KEEP_LOCAL_ARCHIVE).
+      s3-destination: true
+      s3-env: |
+        endpoint   NOCODB_BACKUP_S3_ENDPOINT_URL
+        bucket     NOCODB_BACKUP_S3_BUCKET
+        access-key NOCODB_BACKUP_S3_ACCESS_KEY
+        secret-key NOCODB_BACKUP_S3_SECRET_KEY
+      # PROXY_NETWORK of the Traefik files; the local file declares none.
+      external-networks: 'auto'
+      artifact-name: 'backup-roundtrip-upgrade-${{ matrix.variant }}-diagnostics'
+    secrets: inherit
+
+  # The same upgrade with an off-site copy and a new host on the cluster
+  # stack, with the files, limits and scripts of the cluster round trip above.
+  # The upgrade recreates every instance on the new image; the restore then
+  # runs while all four keep serving, as in the fresh cluster run.
+  backup-roundtrip-cluster-upgrade:
+    name: 🧪 Backup Round Trip (Cluster, upgrade, S3)
+    needs: [validate-compose, validate-scripts]
+    permissions:
+      contents: read
+      packages: read
+    uses: bauer-group/automation-templates/.github/workflows/modules-backup-roundtrip-test.yml@main
+    with:
+      compose-files: '["docker-compose.cluster.yml", "tests/backup-roundtrip/cluster/docker-compose.ci.yml"]'
+      profiles: 'backup'
+      # As in the fresh cluster round trip above.
+      env-overrides: |
+        STACK_NAME=nocodb_cluster_roundtrip
+        PROXY_NETWORK=nocodb_cluster_roundtrip_proxy
+        NC_SITE_URL=http://localhost:8080
+        NOCODB_CPU_LIMIT=1.0
+        NOCODB_MEMORY_LIMIT=1536M
+        POSTGRES_CPU_LIMIT=2.0
+        POSTGRES_MEMORY_LIMIT=2G
+        PG_SHARED_BUFFERS_CLUSTER=256MB
+        PG_EFFECTIVE_CACHE_SIZE_CLUSTER=1GB
+        PG_WORK_MEM_CLUSTER=4MB
+        PG_MAINTENANCE_WORK_MEM_CLUSTER=64MB
+        REDIS_CPU_LIMIT=0.5
+        REDIS_MEMORY_LIMIT=512M
+        REDIS_MEMORYLIMIT=256mb
+        HAPROXY_CPU_LIMIT=0.5
+        HAPROXY_MEMORY_LIMIT=256M
+        SMTP_HOST=
+        NOCODB_BACKUP_SCHEDULE_MODE=interval
+        NOCODB_BACKUP_SCHEDULE_INTERVAL_HOURS=24
+      generated-secrets: 'DATABASE_PASSWORD NC_AUTH_JWT_SECRET HAPROXY_STATS_PASSWORD'
+      build-images: |
+        [
+          {"service": "nocodb-server-1", "context": "src/nocodb"},
+          {"service": "nocodb-init", "context": "src/nocodb-init"},
+          {"service": "nocodb-backup", "context": "src/nocodb-backup"}
+        ]
+      backup-service: 'nocodb-backup'
+      require-components: 'database nocodb-data nocodb'
+      seed-script: 'tests/backup-roundtrip/cluster/seed.sh'
+      mutate-script: 'tests/backup-roundtrip/cluster/mutate.sh'
+      check-script: 'tests/backup-roundtrip/cluster/check.sh'
+      upgrade-from: 'latest-release'
+      s3-destination: true
+      s3-env: |
+        endpoint   NOCODB_BACKUP_S3_ENDPOINT_URL
+        bucket     NOCODB_BACKUP_S3_BUCKET
+        access-key NOCODB_BACKUP_S3_ACCESS_KEY
+        secret-key NOCODB_BACKUP_S3_SECRET_KEY
+      artifact-name: 'backup-roundtrip-cluster-upgrade-diagnostics'
+    secrets: inherit
+
   # ============================================
   # Release Job (only on main branch push)
   # ============================================
 
   release:
     name: 📦 Create Semantic Release
-    needs: [validate-compose, validate-scripts, backup-roundtrip, backup-roundtrip-cluster]
+    needs: [validate-compose, validate-scripts, backup-roundtrip, backup-roundtrip-cluster, backup-roundtrip-upgrade, backup-roundtrip-cluster-upgrade]
     if: |
       (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
       needs.validate-compose.result == 'success' &&
       needs.validate-scripts.result == 'success' &&
       needs.backup-roundtrip.result == 'success' &&
-      needs.backup-roundtrip-cluster.result == 'success'
+      needs.backup-roundtrip-cluster.result == 'success' &&
+      needs.backup-roundtrip-upgrade.result == 'success' &&
+      needs.backup-roundtrip-cluster-upgrade.result == 'success'
     uses: bauer-group/automation-templates/.github/workflows/modules-semantic-release.yml@main
     with:
       target-branch: 'main'
