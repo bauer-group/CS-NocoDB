@@ -377,7 +377,7 @@ Nach dem Restore beschreibt er die alte Datenbank, und eine Instanz, die weiterl
 liefert ihn aus, bis die Eintraege ablaufen (`NC_REDIS_TTL`, Standard 3 Tage). Deshalb
 leert der Backup-Sidecar die Redis-Datenbank nach jedem `backuphelper restore` eines
 Snapshots, der einen Datenbank-Dump enthaelt (auch mit `--only nocodb-data`). Die
-Cluster-Compose-Dateien setzen dafuer `NOCODB_REDIS_URL`; im Log steht
+Cluster-Compose-Dateien setzen dafuer `NOCODB_REDIS_URL`; die Ausgabe des Restores zeigt
 `emptied NocoDB's Redis cache`. NocoDB leert dieselbe Datenbank ohnehin beim Start jeder
 Instanz, das Leeren tut also nur frueher, was der Neustart oben auch tut; wartende Jobs der
 Queue (Bull, gleiche Redis-Datenbank) entfallen wie bei jedem Neustart. Schlaegt es fehl
@@ -1160,7 +1160,7 @@ the restore it describes the old database, and an instance that keeps running se
 until the entries expire (`NC_REDIS_TTL`, 3 days by default). That is why the backup
 sidecar empties the Redis database after every `backuphelper restore` of a snapshot that
 holds a database dump (also with `--only nocodb-data`). The cluster compose files set
-`NOCODB_REDIS_URL` for it; the log says `emptied NocoDB's Redis cache`. NocoDB empties the
+`NOCODB_REDIS_URL` for it; the restore's output shows `emptied NocoDB's Redis cache`. NocoDB empties the
 same database whenever an instance starts anyway, so the flush only does earlier what the
 restart above does too; jobs waiting in the queue (Bull, same Redis database) are dropped
 as on every restart. If it fails (warning `NocoDB's Redis cache was not emptied`), the
