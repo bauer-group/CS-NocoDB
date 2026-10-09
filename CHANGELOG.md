@@ -4,6 +4,21 @@ All notable changes to this project are documented here. This file is maintained
 automatically by [semantic-release](https://github.com/semantic-release/semantic-release)
 on every release to `main`.
 
+## [1.0.7](https://github.com/bauer-group/CS-NocoDB/compare/v1.0.6...v1.0.7) (2026-10-09)
+
+### 🐛 Bug Fixes
+
+* **backup:** counted attachments per table in the export manifest ([00fe435](https://github.com/bauer-group/CS-NocoDB/commit/00fe43574be6271e0f3f0bbf43d3c82dc6fe3a4a))
+* **backup:** emptied the Redis cache after a cluster database restore ([006568f](https://github.com/bauer-group/CS-NocoDB/commit/006568f39cf6497375997076d702ea9af851b816))
+* **backup:** kept same-title attachments apart in the REST export ([8cc6f51](https://github.com/bauer-group/CS-NocoDB/commit/8cc6f517506a41623721bff7740b94e8e75c26bc))
+* **backup:** named the real export switch when a restore finds none ([7f71881](https://github.com/bauer-group/CS-NocoDB/commit/7f71881f4d39b7ed51162c7a8e3bd5b51c63a137))
+
+### 🔧 Maintenance
+
+* update Dockerfile version to 1.0.6 ([884aa2e](https://github.com/bauer-group/CS-NocoDB/commit/884aa2ea995b67e378cf4b9d4ffd212b0ae12b3d))
+* update Dockerfile version to 1.0.6 ([9260468](https://github.com/bauer-group/CS-NocoDB/commit/9260468c2ce562e3d9d7dd7ec909a3dfd274c04d))
+* update Dockerfile version to 1.0.6 ([87f590a](https://github.com/bauer-group/CS-NocoDB/commit/87f590a2678fe911a06056bbd40e0d9268e9aa8a))
+
 ## [1.0.6](https://github.com/bauer-group/CS-NocoDB/compare/v1.0.5...v1.0.6) (2026-10-08)
 
 ### 🔧 Maintenance
