@@ -23,6 +23,12 @@
 #   - HAProxy Stats: docker exec -it ${STACK_NAME:-nocodb-dev}_LB \
 #                      wget -qO- http://127.0.0.1:8404/stats
 #
+# Erster Benutzer einer NEUEN Installation: danach beide Instanzen einmal neu
+# starten - sonst antwortet die, die ihn nicht angelegt hat, auf
+# Bases-Anfragen mit 403 (README, Cluster Mode):
+#   docker compose -f docker-compose.cluster-development.yml restart \
+#     nocodb-server-1 nocodb-server-2
+#
 # -----------------------------------------------------------------------------
 # WARUM NUR ZWEI INSTANZEN
 # -----------------------------------------------------------------------------

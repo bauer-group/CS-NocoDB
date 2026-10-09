@@ -19,6 +19,12 @@
 #   - Application: https://${SERVICE_HOSTNAME}
 #   - HTTP requests are redirected to HTTPS
 #
+# Erster Benutzer einer NEUEN Installation: danach alle nocodb-server-N
+# einmal neu starten - sonst antworten alle Instanzen ausser der, die ihn
+# angelegt hat, auf Bases-Anfragen mit 403 (README, Cluster Mode):
+#   docker compose -f docker-compose.cluster.yml restart \
+#     $(docker compose -f docker-compose.cluster.yml ps --services | grep '^nocodb-server-')
+#
 # -----------------------------------------------------------------------------
 # WARUM DIESER STACK
 # -----------------------------------------------------------------------------

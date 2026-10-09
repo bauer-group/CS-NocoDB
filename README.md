@@ -139,6 +139,23 @@ docker compose -f docker-compose.cluster.yml up -d
 # Zugriff: https://${SERVICE_HOSTNAME}
 ```
 
+**Erster Benutzer einer neuen Installation:** Danach alle Instanzen einmal neu starten:
+
+```bash
+docker compose -f docker-compose.cluster.yml restart \
+    $(docker compose -f docker-compose.cluster.yml ps --services | grep '^nocodb-server-')
+```
+
+NocoDB liest die ID seines Standard-Workspaces nur beim Start eines Prozesses, und in
+einer leeren Datenbank entsteht sie erst mit dem ersten Benutzer. Die Instanz, die ihn
+anlegt, kennt sie danach; jede andere, die schon laeuft, beantwortet Workspace-Anfragen -
+Bases auflisten oder anlegen - mit **403**, bis sie neu startet. Welche Instanz eine
+Anfrage bekommt, entscheidet HAProxy, der Fehler trifft also wechselnd Benutzer und
+API-Clients. Nur die Erstinstallation ist betroffen: Nach jedem spaeteren Start lesen alle
+Instanzen die ID aus der Datenbank. Der
+[Round-Trip-Test des Cluster-Stacks](docs/BACKUP.md#cluster-stack) richtet den Cluster
+genauso ein.
+
 **Warum ein Cluster:** NocoDB ist ein einzelner Node-Prozess und damit
 single-threaded — eine Instanz nutzt genau **einen** CPU-Core, unabhängig davon,
 wie viele der Host hat. Es gibt keinen Cluster-Mode im Prozess selbst. Mehr
@@ -825,6 +842,23 @@ For high API load, e.g. many parallel writes from automation:
 docker compose -f docker-compose.cluster.yml up -d
 # Access: https://${SERVICE_HOSTNAME}
 ```
+
+**First user of a new installation:** restart every instance once afterwards:
+
+```bash
+docker compose -f docker-compose.cluster.yml restart \
+    $(docker compose -f docker-compose.cluster.yml ps --services | grep '^nocodb-server-')
+```
+
+NocoDB reads the id of its default workspace only when a process starts, and in an empty
+database it comes into being with the first user. The instance that creates the user
+knows it from then on; every other one that is already running answers workspace
+requests - listing or creating bases - with **403** until it restarts. HAProxy decides
+which instance a request reaches, so the error hits users and API clients at random. Only
+the first installation is affected: after every later start all instances read the id
+from the database. The
+[cluster stack's round-trip test](docs/BACKUP.md#cluster-stack-1) sets the cluster up the
+same way.
 
 **Why a cluster:** NocoDB is a single Node process and therefore
 single-threaded — one instance uses exactly **one** CPU core, no matter how many

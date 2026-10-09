@@ -385,7 +385,11 @@ Queue (Bull, gleiche Redis-Datenbank) entfallen wie bei jedem Neustart. Schlaegt
 Instanzen neu starten. Die `nocodb restore-*`-Befehle schreiben ueber die API und
 brauchen das nicht. Den Restore bei laufenden Instanzen samt Leeren des Caches prueft vor
 jedem Release ein eigener CI-Lauf auf dem Cluster-Stack
-([Cluster-Stack](#cluster-stack)).
+([Cluster-Stack](#cluster-stack)). Das gilt fuer Snapshots derselben Installation: Die ID
+des Standard-Workspaces liest jede Instanz nur beim Start (siehe README, Cluster Mode,
+erster Benutzer), und das Leeren des Caches aendert daran nichts. Einen Snapshot einer
+anderen Installation - etwa beim Umzug - deshalb nur mit gestoppten Instanzen einspielen,
+wie oben.
 
 #### Daten-Dateien wiederherstellen (nach dem Datenbank-Restore)
 
@@ -1197,7 +1201,11 @@ as on every restart. If it fails (warning `NocoDB's Redis cache was not emptied`
 restore stands - restart all instances then. The `nocodb restore-*` commands write
 through the API and do not need it. A CI run of its own on the cluster stack checks the
 restore over running instances, cache flush included, before every release
-([Cluster Stack](#cluster-stack-1)).
+([Cluster Stack](#cluster-stack-1)). That holds for snapshots of the same installation:
+every instance reads the id of the default workspace only when it starts (see the README,
+cluster mode, first user), and emptying the cache does not change that. Restore a snapshot
+of another installation - when moving, for example - only with the instances stopped, as
+above.
 
 #### Restore Data Files (after the database restore)
 
