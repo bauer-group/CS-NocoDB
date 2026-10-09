@@ -11,6 +11,13 @@
 #
 # Data is written and read through NocoDB's REST API (curl and jq on the
 # runner) - the same API the sidecar's nocodb-rest source exports from.
+#
+# The scripts address two services, both nocodb-server by default (the
+# single-instance stacks). The cluster round trip (cluster/) exports other ones
+# before it runs these scripts:
+#   NOCODB_API_SERVICE    the service whose port 8080 the API calls go to
+#   NOCODB_FILES_SERVICE  the service whose data volume the scripts read and
+#                         delete files in
 # =============================================================================
 
 # Command substitutions keep set -e: a failing call inside VALUE=$(helper) then
@@ -38,16 +45,20 @@ ATTACHMENT_CONTENTS=(
   "backup round trip attachment ${ROUNDTRIP_MARKER} two"
 )
 
-# The NocoDB data volume inside nocodb-server. The Local storage adapter puts
-# uploads below nc/uploads; the scripts search the whole volume for the marker,
-# so a changed upload layout cannot hide a file.
+NOCODB_API_SERVICE="${NOCODB_API_SERVICE:-nocodb-server}"
+NOCODB_FILES_SERVICE="${NOCODB_FILES_SERVICE:-nocodb-server}"
+
+# The NocoDB data volume inside NOCODB_FILES_SERVICE. The Local storage adapter
+# puts uploads below nc/uploads; the scripts search the whole volume for the
+# marker, so a changed upload layout cannot hide a file.
 NOCODB_DATA_DIR="/usr/app/data"
 
-# NocoDB as published on the runner, whatever EXPOSED_APP_PORT says.
+# NocoDB as published on the runner, whatever EXPOSED_APP_PORT says: through
+# NOCODB_API_SERVICE, or through the service given as $1.
 nocodb_url() {
-  local published
-  published=$(docker compose port nocodb-server 8080)
-  [ -n "$published" ] || { echo "nocodb-server does not publish port 8080" >&2; return 1; }
+  local service="${1:-$NOCODB_API_SERVICE}" published
+  published=$(docker compose port "$service" 8080)
+  [ -n "$published" ] || { echo "$service does not publish port 8080" >&2; return 1; }
   echo "http://127.0.0.1:${published##*:}"
 }
 
@@ -101,6 +112,39 @@ marker_records() {
 
 # Files on the NocoDB data volume whose name carries the marker, one per line.
 marker_files() {
-  docker compose exec -T nocodb-server \
+  docker compose exec -T "$NOCODB_FILES_SERVICE" \
     find "$NOCODB_DATA_DIR" -type f -name "*${ROUNDTRIP_MARKER}*"
+}
+
+# The contents of the first record's attachments in $1 (a marker_records
+# response) as NocoDB at NOCODB_URL serves them, one per line and sorted.
+served_attachments() {
+  jq -er '.list[0].Files[] | .signedPath // .path' <<< "$1" \
+    | while IFS= read -r link; do
+        curl --silent --show-error --fail --max-time 60 "${NOCODB_URL:?}/${link#/}"; echo
+      done | sort
+}
+
+# -- check scripts ---------------------------------------------------------------
+# The count every seeded item has in the state ROUNDTRIP_EXPECT names: 1 for
+# present, 0 for absent.
+expected_count() {
+  case "${ROUNDTRIP_EXPECT:?set by the round-trip module}" in
+    present) echo 1 ;;
+    absent)  echo 0 ;;
+    *) echo "unknown ROUNDTRIP_EXPECT '$ROUNDTRIP_EXPECT'" >&2; return 2 ;;
+  esac
+}
+
+# expect_count WHAT GOT [WANT] - prints one check line and sets the caller's
+# FAILED=1 on a mismatch. WANT defaults to the caller's WANT (expected_count).
+expect_count() {
+  local what="$1" got="$2" want="${3:-$WANT}"
+  if [ "$got" = "$want" ]; then
+    echo "ok   $what: $got (expected $want)"
+  else
+    echo "FAIL $what: $got (expected $want)"
+    # shellcheck disable=SC2034 # read by the check script that sourced this file
+    FAILED=1
+  fi
 }

@@ -21,7 +21,7 @@ IDS=$(marker_records "$TABLE_ID" \
   | jq -ec '[.list[] | {Id}] | if length == 1 then . else error("\(length) seeded records, expected 1") end')
 nc_api DELETE "/api/v2/tables/${TABLE_ID}/records" -H 'Content-Type: application/json' --data-binary "$IDS" > /dev/null
 
-DELETED=$(docker compose exec -T nocodb-server \
+DELETED=$(docker compose exec -T "$NOCODB_FILES_SERVICE" \
   find "$NOCODB_DATA_DIR" -type f -name "*${ROUNDTRIP_MARKER}*" -print -delete)
 [ -n "$DELETED" ] || { echo "no attachment file carrying the marker to delete" >&2; exit 1; }
 
