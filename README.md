@@ -381,8 +381,7 @@ NocoDB/
 │
 ├── docker-compose.cluster.yml            # Cluster: HAProxy + 4/6/8 Instanzen + Redis
 ├── docker-compose.cluster-development.yml # Cluster lokal: 2 Instanzen + MinIO
-├── haproxy/
-│   └── haproxy.cfg                       # Load-Balancer-Config (beide Cluster-Modi)
+│                                         # (HAProxy-Config jeweils inline)
 │
 ├── src/
 │   ├── nocodb/                           # NocoDB Base Image (Custom Build)
@@ -395,24 +394,16 @@ NocoDB/
 │   │       ├── 01_collation_check.py
 │   │       └── 02_audit_cleanup.py
 │   │
-│   └── nocodb-backup/                    # Backup Sidecar Container
-│       ├── Dockerfile
-│       ├── requirements.txt
-│       ├── main.py                       # Entry Point
-│       ├── cli.py                        # CLI für manuelle Operationen
-│       ├── config.py                     # Konfiguration (Pydantic Settings)
-│       ├── scheduler.py                  # Cron/Interval Scheduler
-│       ├── backup/                       # Backup-Module
-│       │   ├── pg_dump.py               # PostgreSQL Dump
-│       │   ├── nocodb_exporter.py       # NocoDB API Export
-│       │   └── file_backup.py           # NocoDB Data Files (tar.gz)
-│       ├── storage/
-│       │   └── s3_client.py             # S3-kompatibles Storage
-│       ├── alerting/                     # Benachrichtigungen
-│       │   ├── email_alerter.py
-│       │   ├── teams_alerter.py
-│       │   └── webhook_alerter.py
-│       └── tests/                        # Unit Tests
+│   └── nocodb-backup/                    # Backup-Sidecar: BackupHelper-Engine + Plugin
+│       ├── Dockerfile                    # FROM cs-backuphelper, Plugin-Tests als Build-Gate
+│       └── plugin/                       # Python-Paket backuphelper-nocodb
+│           ├── pyproject.toml            # Entry Points: Quelle, CLI-Gruppe, Hook
+│           ├── nocodb_backup_ext/
+│           │   ├── rest_source.py        # Quelle nocodb-rest (REST-API-Export)
+│           │   ├── commands.py           # backuphelper nocodb restore-*
+│           │   ├── hooks.py              # post_restore: Redis-Cache leeren (Cluster)
+│           │   └── _snapshot.py          # Snapshot fuer die restore-Befehle oeffnen
+│           └── tests/                    # Unit-Tests
 │
 ├── tests/
 │   └── backup-roundtrip/                 # Seed/Mutate/Check fuer den Backup-Round-Trip in CI
@@ -420,6 +411,7 @@ NocoDB/
 ├── docs/
 │   ├── AUDIT_CLEANUP.md                  # Audit-Tabellen Bereinigung
 │   ├── BACKUP.md                         # Backup & Recovery Dokumentation
+│   ├── MIGRATION.md                      # Umzug auf einen neuen Server
 │   └── PG_UPGRADE.md                     # PostgreSQL Upgrade Anleitung
 │
 └── tools/
@@ -450,22 +442,22 @@ Mit aktiviertem Backup-Sidecar:
 docker compose -f docker-compose.traefik.yml --profile backup up -d
 
 # Sofort-Backup ausfuehren
-docker exec ${STACK_NAME}_BACKUP python main.py --now
+docker exec ${STACK_NAME}_BACKUP backuphelper --now
 
 # Backups auflisten
-docker exec ${STACK_NAME}_BACKUP python cli.py list
+docker exec ${STACK_NAME}_BACKUP backuphelper list
 
-# Datenbank wiederherstellen
-docker exec ${STACK_NAME}_BACKUP python cli.py restore-dump 2024-02-05_05-15-00
+# Datenbank wiederherstellen (NocoDB vorher stoppen, siehe docs/BACKUP.md)
+docker exec -it ${STACK_NAME}_BACKUP backuphelper restore 2024-02-05_05-15-00 --only database
 
-# Daten-Dateien wiederherstellen (nach restore-dump)
-docker exec ${STACK_NAME}_BACKUP python cli.py restore-files 2024-02-05_05-15-00
+# Daten-Dateien wiederherstellen (nach dem Datenbank-Restore)
+docker exec -it ${STACK_NAME}_BACKUP backuphelper restore 2024-02-05_05-15-00 --only nocodb-data
 
 # Tabellen-Schema auf neuem System wiederherstellen
-docker exec ${STACK_NAME}_BACKUP python cli.py restore-schema 2024-02-05_05-15-00
+docker exec -it ${STACK_NAME}_BACKUP backuphelper nocodb restore-schema 2024-02-05_05-15-00
 
 # Records in bestehende Tabellen importieren
-docker exec ${STACK_NAME}_BACKUP python cli.py restore-records 2024-02-05_05-15-00 --base "Meine_Base"
+docker exec -it ${STACK_NAME}_BACKUP backuphelper nocodb restore-records 2024-02-05_05-15-00 --base "Meine_Base"
 ```
 
 Siehe [docs/BACKUP.md](docs/BACKUP.md) für Details.
@@ -1060,6 +1052,10 @@ NocoDB/
 ├── docker-compose.traefik-header-auth.yml # Traefik HTTPS + header auth
 ├── docker-compose.development.yml        # Development with MinIO
 │
+├── docker-compose.cluster.yml            # Cluster: HAProxy + 4/6/8 instances + Redis
+├── docker-compose.cluster-development.yml # Cluster locally: 2 instances + MinIO
+│                                         # (HAProxy config inline in both)
+│
 ├── src/
 │   ├── nocodb/                           # NocoDB base image (custom build)
 │   │   └── Dockerfile
@@ -1071,24 +1067,16 @@ NocoDB/
 │   │       ├── 01_collation_check.py
 │   │       └── 02_audit_cleanup.py
 │   │
-│   └── nocodb-backup/                    # Backup sidecar container
-│       ├── Dockerfile
-│       ├── requirements.txt
-│       ├── main.py                       # Entry point
-│       ├── cli.py                        # CLI for manual operations
-│       ├── config.py                     # Configuration (Pydantic Settings)
-│       ├── scheduler.py                  # Cron/interval scheduler
-│       ├── backup/                       # Backup modules
-│       │   ├── pg_dump.py               # PostgreSQL dump
-│       │   ├── nocodb_exporter.py       # NocoDB API export
-│       │   └── file_backup.py           # NocoDB data files (tar.gz)
-│       ├── storage/
-│       │   └── s3_client.py             # S3-compatible storage
-│       ├── alerting/                     # Notifications
-│       │   ├── email_alerter.py
-│       │   ├── teams_alerter.py
-│       │   └── webhook_alerter.py
-│       └── tests/                        # Unit tests
+│   └── nocodb-backup/                    # Backup sidecar: BackupHelper engine + plugin
+│       ├── Dockerfile                    # FROM cs-backuphelper, plugin tests gate the build
+│       └── plugin/                       # Python package backuphelper-nocodb
+│           ├── pyproject.toml            # Entry points: source, CLI group, hook
+│           ├── nocodb_backup_ext/
+│           │   ├── rest_source.py        # nocodb-rest source (REST API export)
+│           │   ├── commands.py           # backuphelper nocodb restore-*
+│           │   ├── hooks.py              # post_restore: empty the Redis cache (cluster)
+│           │   └── _snapshot.py          # Opens a snapshot for the restore commands
+│           └── tests/                    # Unit tests
 │
 ├── tests/
 │   └── backup-roundtrip/                 # Seed/mutate/check for the backup round trip in CI
@@ -1096,6 +1084,7 @@ NocoDB/
 ├── docs/
 │   ├── AUDIT_CLEANUP.md                  # Audit table cleanup
 │   ├── BACKUP.md                         # Backup & recovery documentation
+│   ├── MIGRATION.md                      # Moving to a new server
 │   └── PG_UPGRADE.md                     # PostgreSQL upgrade guide
 │
 └── tools/
@@ -1126,22 +1115,22 @@ With the backup sidecar enabled:
 docker compose -f docker-compose.traefik.yml --profile backup up -d
 
 # Run immediate backup
-docker exec ${STACK_NAME}_BACKUP python main.py --now
+docker exec ${STACK_NAME}_BACKUP backuphelper --now
 
 # List backups
-docker exec ${STACK_NAME}_BACKUP python cli.py list
+docker exec ${STACK_NAME}_BACKUP backuphelper list
 
-# Restore database
-docker exec ${STACK_NAME}_BACKUP python cli.py restore-dump 2024-02-05_05-15-00
+# Restore database (stop NocoDB first, see docs/BACKUP.md)
+docker exec -it ${STACK_NAME}_BACKUP backuphelper restore 2024-02-05_05-15-00 --only database
 
-# Restore data files (after restore-dump)
-docker exec ${STACK_NAME}_BACKUP python cli.py restore-files 2024-02-05_05-15-00
+# Restore data files (after the database restore)
+docker exec -it ${STACK_NAME}_BACKUP backuphelper restore 2024-02-05_05-15-00 --only nocodb-data
 
 # Restore table schema on a new system
-docker exec ${STACK_NAME}_BACKUP python cli.py restore-schema 2024-02-05_05-15-00
+docker exec -it ${STACK_NAME}_BACKUP backuphelper nocodb restore-schema 2024-02-05_05-15-00
 
 # Import records into existing tables
-docker exec ${STACK_NAME}_BACKUP python cli.py restore-records 2024-02-05_05-15-00 --base "My_Base"
+docker exec -it ${STACK_NAME}_BACKUP backuphelper nocodb restore-records 2024-02-05_05-15-00 --base "My_Base"
 ```
 
 See [docs/BACKUP.md](docs/BACKUP.md) for details.
