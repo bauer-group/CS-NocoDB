@@ -12,7 +12,9 @@
 #                              attachments) as one snapshot component.
 #    * `nocodb` command group — restore-schema / restore-records /
 #                              restore-attachments, mounted under the engine CLI.
-#  The engine discovers both via entry points at runtime. The raw DB dump and
+#    * `post_restore` hook    — empties the NocoDB instances' Redis cache after a
+#                              database restore (cluster stacks, NOCODB_REDIS_URL).
+#  The engine discovers all three via entry points at runtime. The raw DB dump and
 #  data-file restores are inherited generically:
 #    backuphelper restore <id> --only database    (pg_dump restore)
 #    backuphelper restore <id> --only nocodb-data (data-file extract)

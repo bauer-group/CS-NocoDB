@@ -589,6 +589,10 @@ services:
       WEBHOOK_SECRET: ${NOCODB_BACKUP_WEBHOOK_SECRET:-}
       # NocoDB REST endpoint — also read directly by the `nocodb restore-*` commands
       NOCODB_API_URL: ${NOCODB_API_URL:-http://loadbalancer:8080}
+      # Redis of the NocoDB instances (their NC_REDIS_URL). After `backuphelper
+      # restore` of a database dump the sidecar empties it, so instances that
+      # keep running do not serve the metadata cache of the old database.
+      NOCODB_REDIS_URL: redis://redis-server:6379
       # BackupHelper engine config. Non-secret values interpolated by compose from
       # .env; secrets use $${VAR} so the engine/plugin resolves them at runtime from
       # the container env (never written into the rendered config).

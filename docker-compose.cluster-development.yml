@@ -456,6 +456,10 @@ services:
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       WEBHOOK_SECRET: ${NOCODB_BACKUP_WEBHOOK_SECRET:-}
       NOCODB_API_URL: ${NOCODB_API_URL:-http://loadbalancer:8080}
+      # Redis of the NocoDB instances (their NC_REDIS_URL). After `backuphelper
+      # restore` of a database dump the sidecar empties it, so instances that
+      # keep running do not serve the metadata cache of the old database.
+      NOCODB_REDIS_URL: redis://redis-server:6379
       # dump_format "custom": the engine restores it with pg_restore --clean
       # --if-exists, which also works over a live database. A "plain" dump is
       # replayed with psql and stops at the first table that already exists.

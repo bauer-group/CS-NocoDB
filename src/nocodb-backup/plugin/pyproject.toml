@@ -12,6 +12,8 @@ license = "MIT"
 authors = [{ name = "BAUER GROUP" }]
 dependencies = [
   "httpx>=0.27",
+  # post_restore hook: empties NocoDB's Redis cache in cluster mode
+  "redis>=5",
 ]
 
 [project.urls]
@@ -24,6 +26,10 @@ nocodb-rest = "nocodb_backup_ext.rest_source:NocoDBRestSource"
 # The engine mounts this typer.Typer group under its CLI as `backuphelper nocodb …`.
 [project.entry-points."backuphelper.commands"]
 nocodb = "nocodb_backup_ext.commands:app"
+
+# The engine calls register(registry) at startup; it adds the post_restore hook.
+[project.entry-points."backuphelper.hooks"]
+nocodb = "nocodb_backup_ext.hooks:register"
 
 [tool.setuptools.packages.find]
 where = ["."]

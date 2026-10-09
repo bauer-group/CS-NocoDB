@@ -356,6 +356,32 @@ docker exec ${STACK_NAME}_DATABASE psql -U nocodb -d postgres \
 docker exec ${STACK_NAME}_BACKUP backuphelper restore 2024-02-05_05-15-00 --only database
 ```
 
+**Cluster-Modus** (`docker-compose.cluster.yml`, `docker-compose.cluster-development.yml`):
+Dort gibt es keinen Service `nocodb-server`, sondern `nocodb-server-1` bis `-4`, `-6` oder
+`-8`. Alle stoppen und den Stack danach mit `up -d` starten - mit denselben Profilen wie
+beim Deployment -, damit `nocodb-server-1` als Erster startet und die uebrigen auf seine
+Migrationen warten:
+
+```bash
+docker compose -f docker-compose.cluster.yml stop \
+    $(docker compose -f docker-compose.cluster.yml ps --services | grep '^nocodb-server-')
+docker exec ${STACK_NAME}_BACKUP backuphelper restore 2024-02-05_05-15-00 --only database
+docker compose -f docker-compose.cluster.yml up -d
+```
+
+Die Instanzen teilen ihren Metadaten-Cache (Bases, Tabellen, Spalten, Views) in Redis.
+Nach dem Restore beschreibt er die alte Datenbank, und eine Instanz, die weiterlaeuft,
+liefert ihn aus, bis die Eintraege ablaufen (`NC_REDIS_TTL`, Standard 3 Tage). Deshalb
+leert der Backup-Sidecar die Redis-Datenbank nach jedem `backuphelper restore` eines
+Snapshots, der einen Datenbank-Dump enthaelt (auch mit `--only nocodb-data`). Die
+Cluster-Compose-Dateien setzen dafuer `NOCODB_REDIS_URL`; im Log steht
+`emptied NocoDB's Redis cache`. NocoDB leert dieselbe Datenbank ohnehin beim Start jeder
+Instanz, das Leeren tut also nur frueher, was der Neustart oben auch tut; wartende Jobs der
+Queue (Bull, gleiche Redis-Datenbank) entfallen wie bei jedem Neustart. Schlaegt es fehl
+(Warnung `NocoDB's Redis cache was not emptied`), bleibt der Restore gueltig - dann alle
+Instanzen neu starten. Die `nocodb restore-*`-Befehle schreiben ueber die API und
+brauchen das nicht.
+
 #### Daten-Dateien wiederherstellen (nach restore-dump)
 
 ```bash
@@ -1107,6 +1133,31 @@ docker exec ${STACK_NAME}_DATABASE psql -U nocodb -d postgres \
     -c 'DROP DATABASE nocodb WITH (FORCE)' -c 'CREATE DATABASE nocodb OWNER nocodb'
 docker exec ${STACK_NAME}_BACKUP backuphelper restore 2024-02-05_05-15-00 --only database
 ```
+
+**Cluster mode** (`docker-compose.cluster.yml`, `docker-compose.cluster-development.yml`):
+there is no `nocodb-server` service, but `nocodb-server-1` up to `-4`, `-6` or `-8`. Stop
+all of them and start the stack with `up -d` afterwards - with the same profiles as at
+deployment - so that `nocodb-server-1` starts first and the others wait for its
+migrations:
+
+```bash
+docker compose -f docker-compose.cluster.yml stop \
+    $(docker compose -f docker-compose.cluster.yml ps --services | grep '^nocodb-server-')
+docker exec ${STACK_NAME}_BACKUP backuphelper restore 2024-02-05_05-15-00 --only database
+docker compose -f docker-compose.cluster.yml up -d
+```
+
+The instances share their metadata cache (bases, tables, columns, views) in Redis. After
+the restore it describes the old database, and an instance that keeps running serves it
+until the entries expire (`NC_REDIS_TTL`, 3 days by default). That is why the backup
+sidecar empties the Redis database after every `backuphelper restore` of a snapshot that
+holds a database dump (also with `--only nocodb-data`). The cluster compose files set
+`NOCODB_REDIS_URL` for it; the log says `emptied NocoDB's Redis cache`. NocoDB empties the
+same database whenever an instance starts anyway, so the flush only does earlier what the
+restart above does too; jobs waiting in the queue (Bull, same Redis database) are dropped
+as on every restart. If it fails (warning `NocoDB's Redis cache was not emptied`), the
+restore stands - restart all instances then. The `nocodb restore-*` commands write
+through the API and do not need it.
 
 #### Restore Data Files (after restore-dump)
 
