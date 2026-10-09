@@ -269,6 +269,7 @@ class NocoDBRestSource(Source):
 
                     if self.include_attachments:
                         fields = table.get("columns", [])
+                        table_attachments = 0
                         for att in self._extract_attachments(all_records, fields):
                             stored = att.get("path") or att.get("url") or ""
                             title = att.get("title") or stored.split("/")[-1].split("?")[0]
@@ -276,13 +277,14 @@ class NocoDBRestSource(Source):
                                 field_dir = table_dir / "attachments" / _sanitize_filename(att.get("field", "unknown"))
                                 target = field_dir / _sanitize_filename(title)
                                 if self._download_file(client, att["link"], target):
-                                    attachments_count += 1
+                                    table_attachments += 1
                                     if target.exists():
                                         total_size += target.stat().st_size
                                 else:
                                     warnings.append(f"{base_title}/{table_title}: attachment {title} "
                                                     "not downloaded")
-                        table_manifest["attachments_count"] = attachments_count
+                        attachments_count += table_attachments
+                        table_manifest["attachments_count"] = table_attachments
 
                 base_manifest["tables"].append(table_manifest)
             manifest["bases"].append(base_manifest)

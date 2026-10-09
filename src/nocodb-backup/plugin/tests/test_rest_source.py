@@ -116,6 +116,53 @@ def test_produce_downloads_local_storage_attachments(tmp_path, monkeypatch):
     assert _export_tree(comp)["bases/Base A/tables/Tbl/attachments/Files/report.txt"] == b"content"
 
 
+def _attachment_routes(tables: dict[str, list[dict]]) -> dict:
+    """Routes for one base whose tables (id -> records) each have a Files column."""
+    routes = {
+        "/api/v2/meta/bases": {"list": [{"id": "b1", "title": "Base A"}]},
+        "/api/v2/meta/bases/b1/tables": {"list": [{"id": t, "title": f"T{t}"} for t in tables]},
+    }
+    for table_id, records in tables.items():
+        routes[f"/api/v2/meta/tables/{table_id}"] = {
+            "id": table_id, "title": f"T{table_id}", "columns": [{"title": "Files", "uidt": "Attachment"}]}
+        routes[f"/api/v2/tables/{table_id}/records?offset=0"] = {
+            "list": records, "pageInfo": {"totalRows": len(records)}}
+    return routes
+
+
+def _serving_client(src, routes, files: dict[str, bytes]):
+    """Mock NocoDB: JSON routes plus attachment downloads (path -> bytes)."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path in files:
+            return httpx.Response(200, content=files[request.url.path])
+        key = request.url.path
+        if request.url.query:
+            key = f"{key}?offset={request.url.params.get('offset', '0')}"
+        body = routes.get(key)
+        return httpx.Response(200, json=body) if body is not None else httpx.Response(404)
+
+    return httpx.Client(base_url=src.api_url, transport=httpx.MockTransport(handler))
+
+
+def test_manifest_counts_attachments_per_table(tmp_path, monkeypatch):
+    # attachments_count of a table used to be the running total of the whole
+    # export, so every table after the first reported the earlier ones as well.
+    src = NocoDBRestSource({"type": "nocodb-rest", "token": "t", "api_url": "http://nocodb:8080"})
+    routes = _attachment_routes({
+        "t1": [{"Id": 1, "Files": [{"path": "download/a1.txt", "title": "a1.txt"},
+                                   {"path": "download/a2.txt", "title": "a2.txt"}]}],
+        "t2": [{"Id": 1, "Files": [{"path": "download/b1.txt", "title": "b1.txt"}]}],
+    })
+    files = {"/download/a1.txt": b"a1", "/download/a2.txt": b"a2", "/download/b1.txt": b"b1"}
+    monkeypatch.setattr(src, "_client", lambda: _serving_client(src, routes, files))
+
+    [comp] = src.produce(tmp_path)
+    assert comp.metadata["attachments"] == 3
+    manifest = json.loads(_export_tree(comp)["manifest.json"])
+    counts = {t["title"]: t["attachments_count"] for t in manifest["bases"][0]["tables"]}
+    assert counts == {"Tt1": 2, "Tt2": 1}
+
+
 def test_attachment_link_prefers_signed_links():
     from nocodb_backup_ext.rest_source import _attachment_link
 
