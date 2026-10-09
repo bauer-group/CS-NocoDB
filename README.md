@@ -17,7 +17,7 @@ Production-ready Docker Compose Setup für [NocoDB](https://nocodb.com/) mit Pos
 - **PostgreSQL 18** mit Production-Tuning (SSD/NVMe optimiert)
 - **5 Deployment-Modi** für verschiedene Umgebungen
 - **Automatisierte Backups** mit S3-Support und Alerting
-- **Backup-Round-Trip in CI**: jedes Release besteht vorher ein echtes Backup und Restore des Stacks ([Details](docs/BACKUP.md#round-trip-test-in-ci))
+- **Backup-Round-Trip in CI**: jedes Release besteht vorher ein echtes Backup und Restore des Single-Instance- und des Cluster-Stacks ([Details](docs/BACKUP.md#round-trip-test-in-ci))
 - **Init Container** für Datenbank-Wartung (Collation Check/Auto-Fix)
 - **IPv4 + IPv6** Dual-Stack Netzwerk
 - **Healthchecks** für alle Services
@@ -407,6 +407,7 @@ NocoDB/
 │
 ├── tests/
 │   └── backup-roundtrip/                 # Seed/Mutate/Check fuer den Backup-Round-Trip in CI
+│       └── cluster/                      # Dasselbe fuer den Cluster-Stack, mit CI-Override
 │
 ├── docs/
 │   ├── AUDIT_CLEANUP.md                  # Audit-Tabellen Bereinigung
@@ -702,7 +703,7 @@ Production-ready Docker Compose setup for [NocoDB](https://nocodb.com/) with Pos
 - **PostgreSQL 18** with production tuning (SSD/NVMe optimized)
 - **5 deployment modes** for different environments
 - **Automated backups** with S3 support and alerting
-- **Backup round trip in CI**: every release first passes a real backup and restore of the stack ([details](docs/BACKUP.md#round-trip-test-in-ci-1))
+- **Backup round trip in CI**: every release first passes a real backup and restore of the single-instance and the cluster stack ([details](docs/BACKUP.md#round-trip-test-in-ci-1))
 - **Init container** for database maintenance (collation check/auto-fix)
 - **IPv4 + IPv6** dual-stack networking
 - **Health checks** for all services
@@ -1080,6 +1081,7 @@ NocoDB/
 │
 ├── tests/
 │   └── backup-roundtrip/                 # Seed/mutate/check for the backup round trip in CI
+│       └── cluster/                      # The same for the cluster stack, with a CI override
 │
 ├── docs/
 │   ├── AUDIT_CLEANUP.md                  # Audit table cleanup
