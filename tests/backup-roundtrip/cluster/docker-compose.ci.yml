@@ -1,0 +1,42 @@
+# =============================================================================
+# CS-NocoDB backup round trip - CI override for docker-compose.cluster.yml
+# =============================================================================
+# The cluster round trip in .github/workflows/docker-release.yml merges this
+# file over docker-compose.cluster.yml (compose-files). It changes only what a
+# GitHub runner without Traefik needs; the services, their limits, HAProxy,
+# Redis and the backup sidecar stay exactly as deployed:
+#
+#   proxy network  The stack joins Traefik's external network (PROXY_NETWORK).
+#                  The runner has no Traefik, so Compose creates the network
+#                  itself and removes it with the stack.
+#   ports          The load balancer and every instance publish their port
+#                  8080 on a random loopback port. The scripts in this
+#                  directory reach the cluster through HAProxy, as users do,
+#                  and each instance directly, to prove that every one of them
+#                  serves the restored data ('docker compose port <service>
+#                  8080'). Instances 5-8 keep their scale profiles.
+# =============================================================================
+
+services:
+  loadbalancer:
+    ports: ["127.0.0.1::8080"]
+  nocodb-server-1:
+    ports: ["127.0.0.1::8080"]
+  nocodb-server-2:
+    ports: ["127.0.0.1::8080"]
+  nocodb-server-3:
+    ports: ["127.0.0.1::8080"]
+  nocodb-server-4:
+    ports: ["127.0.0.1::8080"]
+  nocodb-server-5:
+    ports: ["127.0.0.1::8080"]
+  nocodb-server-6:
+    ports: ["127.0.0.1::8080"]
+  nocodb-server-7:
+    ports: ["127.0.0.1::8080"]
+  nocodb-server-8:
+    ports: ["127.0.0.1::8080"]
+
+networks:
+  proxy:
+    external: false
