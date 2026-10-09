@@ -818,8 +818,12 @@ Datenbank, laufende Instanzen liefern es aber erst aus, wenn der Cache geleert i
 kein Neustart sein darf: NocoDB leert denselben Cache beim Start jeder Instanz und wuerde
 verdecken, ob der Sidecar es getan hat. Den dokumentierten Weg mit gestoppten Instanzen
 (siehe [Datenbank wiederherstellen](#datenbank-wiederherstellen)) deckt dieser Lauf deshalb
-nicht ab. Schlaegt er fehl, enthaelt das Artefakt `backup-roundtrip-cluster-diagnostics`
-die Logs aller Services.
+nicht ab.
+
+Ein Lauf dauerte gemessen 2 min 44 s, parallel zum Single-Instance-Lauf: 45 s fuer den Bau
+der drei Images, 48 s bis der Cluster laeuft, 32 s fuer den Seed samt Neustart, der Rest
+fuer Backup, Restore und Pruefungen. Schlaegt er fehl, enthaelt das Artefakt
+`backup-roundtrip-cluster-diagnostics` die Logs aller Services.
 
 ### Referenzen
 
@@ -1629,7 +1633,11 @@ database only when none is cached. After the restore the field is back in the da
 running instances serve it only once the cache has been emptied. Why no restart is allowed:
 NocoDB empties the same cache whenever an instance starts, which would hide whether the
 sidecar did. For the same reason this run does not cover the documented path with stopped
-instances (see [Restore Database](#restore-database)). When it fails, the
+instances (see [Restore Database](#restore-database)).
+
+A run took 2 min 44 s as measured, in parallel with the single-instance run: 45 s to build
+the three images, 48 s until the cluster is up, 32 s for the seed with its restart, the
+rest for backup, restore and checks. When it fails, the
 `backup-roundtrip-cluster-diagnostics` artifact holds every service's log.
 
 ### References
