@@ -1,6 +1,6 @@
 # backuphelper-nocodb
 
-NocoDB extension for the BAUER GROUP **BackupHelper** engine. It adds the two
+NocoDB extension for the BAUER GROUP **BackupHelper** engine. It adds the
 NocoDB-specific pieces that the generic engine cannot know about, and inherits
 everything else (scheduling, sha256 manifest, off-site S3, retention, encryption,
 notifications, DB dump + data-file restore) from the engine core.
@@ -55,6 +55,20 @@ Mounted under the engine CLI as `backuphelper nocodb …`:
 | `restore-schema <id>` | recreate bases + tables from the export (schema-aware: skips system/virtual/pk columns, carries Select options into `dtxp`). `--base/--table/--skip-existing/--force` |
 | `restore-records <id>` | batched (100) record re-insert into existing tables, strips system fields. `--base/--table/--with-attachments/--force` |
 | `restore-attachments <id>` | re-upload + relink attachments onto existing records, matched by original id. Files come from `attachments.json`; exports without it fall back to a 4-strategy file finder. `--base/--table/--force` |
+
+### 3. `post_restore` hook
+
+Registered in the `backuphelper.hooks` entry-point group. After `backuphelper restore`
+of a snapshot that holds a `postgres` component, it runs `FLUSHDB` on
+`NOCODB_REDIS_URL` - the Redis that the NocoDB instances of the cluster stacks share
+as metadata cache (and job queue). Without the flush, instances that keep running
+serve the metadata of the database before the restore until the keys expire. NocoDB
+itself empties that database whenever an instance starts, so the flush loses nothing
+a restart would keep.
+
+Unset `NOCODB_REDIS_URL` (single-instance stacks) makes the hook a no-op. A failed
+flush is logged as a warning naming the fix (restart every instance) and never fails
+the restore, which has already run.
 
 The **generic** halves of the old bespoke restore live in the engine:
 

@@ -293,8 +293,10 @@ temporaeren Deaktivieren leer lassen (`COMPOSE_PROFILES=`) oder Zeile entfernen.
 - Cron oder Interval Scheduling
 - Alerting (Email, Teams, Webhook)
 - CLI für manuelle Backups und Restore
+- Cluster-Modus: leert nach einem Datenbank-Restore den Redis-Cache der Instanzen
 
-Siehe [docs/BACKUP.md](docs/BACKUP.md) für die vollstaendige Dokumentation.
+Siehe [docs/BACKUP.md](docs/BACKUP.md) für die vollstaendige Dokumentation, im
+Cluster-Modus besonders [Datenbank wiederherstellen](docs/BACKUP.md#datenbank-wiederherstellen).
 
 ### Konfiguration
 
@@ -972,8 +974,10 @@ docker compose -f docker-compose.traefik.yml --profile backup up -d
 - Cron or interval scheduling
 - Alerting (email, Teams, webhook)
 - CLI for manual backups and restore
+- Cluster mode: empties the instances' Redis cache after a database restore
 
-See [docs/BACKUP.md](docs/BACKUP.md) for full documentation.
+See [docs/BACKUP.md](docs/BACKUP.md) for full documentation; in cluster mode see
+[Restore Database](docs/BACKUP.md#restore-database) in particular.
 
 ### Configuration
 
