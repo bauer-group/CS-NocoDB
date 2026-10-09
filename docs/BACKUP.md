@@ -734,18 +734,19 @@ wiederhergestellt hat.
 |-------|--------------|
 | Build | `src/nocodb`, `src/nocodb-init` und `src/nocodb-backup` werden aus dem Commit gebaut, mit frischen Base-Images |
 | Start | `docker-compose.local.yml` mit dem Profil `backup`, CI-Speichergrenzen fuer PostgreSQL, generiertes `DATABASE_PASSWORD` und `NC_AUTH_JWT_SECRET` |
-| Seed | Ueber die NocoDB-API: erster Benutzer, ein API-Token (per `.env` an den Sidecar uebergeben), eine Base mit Tabelle, ein Datensatz mit dem Marker des Laufs und ein Text-Attachment im Daten-Volume |
+| Seed | Ueber die NocoDB-API: erster Benutzer, ein API-Token (per `.env` an den Sidecar uebergeben), eine Base mit Tabelle, ein Datensatz mit dem Marker des Laufs und zwei Text-Attachments mit gleichem Namen und verschiedenem Inhalt im Daten-Volume |
 | Backup | `create`, danach muss `show` `database`, `nocodb-data` und `nocodb` ohne Fehler und Warnungen listen, `verify` muss `OK` melden |
-| Loeschen | Der Datensatz ueber die API, die Attachment-Datei im Volume |
+| Loeschen | Der Datensatz ueber die API, die Attachment-Dateien im Volume |
 | Restore | `nocodb-server` wird gestoppt, `restore <id> --force` laeuft, der Stack startet wieder |
-| Pruefung | Datensatz ueber die API, Datei mit exaktem Inhalt im Volume, NocoDB liefert das Attachment aus, der REST-Export im Snapshot enthaelt Datensatz und Attachment |
+| Pruefung | Datensatz ueber die API, beide Dateien mit exaktem Inhalt im Volume, NocoDB liefert beide Attachments aus, der REST-Export im Snapshot enthaelt den Datensatz und fuer jedes Attachment eine eigene Datei mit dessen Inhalt (ueber `attachments.json`, wie bei `restore-attachments`) |
 
 Die Skripte liegen in [`tests/backup-roundtrip/`](../tests/backup-roundtrip/). Die Pruefung
 laeuft dreimal - vor dem Backup (Daten vorhanden), nach dem Loeschen (Daten weg) und nach
 dem Restore (Daten vorhanden) -, ein Restore, der nichts schreibt, kann also nicht
 bestehen. Den REST-Export (`nocodb`) spielt der volle Restore bewusst nicht ein (das
 geschieht gezielt mit `backuphelper nocodb restore-*`); geprueft wird, dass der Snapshot
-den Datensatz und die Bytes des Attachments enthaelt.
+den Datensatz und die Bytes jedes Attachments enthaelt. Die beiden Attachments haben
+denselben Titel: Ein Export, der Dateien nur nach dem Titel benennt, behielte eines davon.
 
 Ein Lauf dauert gemessen 2 min 35 s: etwa 1 min fuer den Bau der drei Images, 40 s bis der
 Stack laeuft, der Rest fuer Seed, Backup, Restore und Neustart. Er startet bei Pushes auf
@@ -1482,18 +1483,19 @@ engine update ships only after it restored NocoDB data.
 |-------|--------------|
 | Build | `src/nocodb`, `src/nocodb-init` and `src/nocodb-backup` are built from the commit, with fresh base images |
 | Start | `docker-compose.local.yml` with the `backup` profile, CI-sized PostgreSQL memory, a generated `DATABASE_PASSWORD` and `NC_AUTH_JWT_SECRET` |
-| Seed | Through the NocoDB API: the first user, an API token (handed to the sidecar through the `.env`), a base with a table, a record carrying the run's marker and a text attachment on the data volume |
+| Seed | Through the NocoDB API: the first user, an API token (handed to the sidecar through the `.env`), a base with a table, a record carrying the run's marker and two text attachments with the same name and different content on the data volume |
 | Back up | `create`, then `show` must list `database`, `nocodb-data` and `nocodb` without errors or warnings, `verify` must report `OK` |
-| Delete | The record through the API, the attachment file on the volume |
+| Delete | The record through the API, the attachment files on the volume |
 | Restore | `nocodb-server` is stopped, `restore <id> --force` runs, the stack is started again |
-| Check | The record through the API, the file with its exact content on the volume, NocoDB serving the attachment, and the snapshot's REST export holding the record and the attachment |
+| Check | The record through the API, both files with their exact content on the volume, NocoDB serving both attachments, and the snapshot's REST export holding the record and, for each attachment, a file of its own with its content (through `attachments.json`, as `restore-attachments` reads it) |
 
 The scripts live in [`tests/backup-roundtrip/`](../tests/backup-roundtrip/). The check
 runs three times - before the backup (data present), after the deletion (data absent)
 and after the restore (data present) - so a restore that writes nothing cannot pass. The
 full restore leaves the REST export (`nocodb`) alone on purpose (it is restored on demand
 with `backuphelper nocodb restore-*`); the check proves that the snapshot holds the record
-and the attachment's bytes.
+and the bytes of each attachment. The two attachments share their title: an export that
+names files by title alone would keep one of them.
 
 A run took 2 min 35 s as measured: about 1 min to build the three images, 40 s until the
 stack is up, the rest for seeding, backup, restore and restart. It starts on pushes to

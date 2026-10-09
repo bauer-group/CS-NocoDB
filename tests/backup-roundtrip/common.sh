@@ -22,15 +22,21 @@ shopt -s inherit_errexit
 # The marker ends up in a file name and a NocoDB filter expression.
 [[ "$ROUNDTRIP_MARKER" =~ ^[a-z0-9-]+$ ]] || { echo "unexpected marker format" >&2; exit 2; }
 
-# What seed.sh creates: a base with one table, a record carrying the marker and
-# a text attachment whose name and content carry it as well. The attachment
-# values are used by the scripts that source this file.
+# What seed.sh creates: a base with one table and a record carrying the marker
+# with two text attachments whose name and content carry it as well. Both have
+# the same name and so the same title - NocoDB keeps the uploaded file name as
+# the title, so two "invoice.pdf" in one field are common - but different
+# content: the REST export has to keep them apart. The attachment values are
+# used by the scripts that source this file.
 BASE_TITLE="roundtrip"
 TABLE_TITLE="markers"
 # shellcheck disable=SC2034
 ATTACHMENT_NAME="roundtrip-${ROUNDTRIP_MARKER}.txt"
 # shellcheck disable=SC2034
-ATTACHMENT_CONTENT="backup round trip attachment ${ROUNDTRIP_MARKER}"
+ATTACHMENT_CONTENTS=(
+  "backup round trip attachment ${ROUNDTRIP_MARKER} one"
+  "backup round trip attachment ${ROUNDTRIP_MARKER} two"
+)
 
 # The NocoDB data volume inside nocodb-server. The Local storage adapter puts
 # uploads below nc/uploads; the scripts search the whole volume for the marker,
