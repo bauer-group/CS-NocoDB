@@ -76,7 +76,8 @@ Vollstaendiger Datenbank-Dump für Disaster Recovery:
 - **Format:** Komprimiertes Tar-Archiv (`nocodb-data.tar.gz`)
 - **Inhalt:** Alle Dateien aus dem NocoDB-Datenverzeichnis (Uploads, Attachments)
 - **Wiederherstellung:** Direktes Entpacken in das NocoDB-Datenverzeichnis
-- **Empfehlung:** Für Disaster Recovery zusammen mit `restore-dump`
+- **Empfehlung:** Für Disaster Recovery zusammen mit dem Datenbank-Restore
+  (`restore <id> --only database`)
 
 Aktivierung: `NOCODB_BACKUP_INCLUDE_FILES=true` (Standard).
 Deaktivieren wenn Attachments auf S3 liegen (`NC_S3_BUCKET_NAME`).
@@ -162,9 +163,11 @@ NOCODB_BACKUP_RETENTION_COUNT=30
 
 | Variable | Default | Beschreibung |
 |----------|---------|--------------|
-| `NOCODB_BACKUP_SCHEDULE_ENABLED` | `true` | Backup-Scheduler aktivieren |
 | `NOCODB_BACKUP_SCHEDULE_MODE` | `cron` | `cron` oder `interval` |
 | `NOCODB_BACKUP_RETENTION_COUNT` | `30` | Anzahl aufzubewahrender Backups |
+
+Der Scheduler laeuft, solange der Container des Profils `backup` laeuft. Ohne geplante
+Backups das Profil nicht starten.
 
 #### Schedule-Modi
 
@@ -220,10 +223,9 @@ NOCODB_BACKUP_KEEP_LOCAL_ARCHIVE=true
 #### Alerting
 
 ```bash
-# Alerting aktivieren
-NOCODB_BACKUP_ALERT_ENABLED=true
+# Kanaele, Komma-getrennt (leer = kein Alerting)
+NOCODB_BACKUP_ALERT_CHANNELS=email,teams
 NOCODB_BACKUP_ALERT_LEVEL=warnings  # errors, warnings, all
-NOCODB_BACKUP_ALERT_CHANNELS=email,teams  # Komma-getrennt
 
 # Email (nutzt SMTP_HOST, SMTP_USER, SMTP_PASSWORD und SMTP_FROM)
 NOCODB_BACKUP_ALERT_EMAIL=admin@example.com
@@ -281,13 +283,9 @@ docker exec ${STACK_NAME}_BACKUP backuphelper list
 **Ausgabe:**
 
 ```text
-┏━━━━┳━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━┳━━━━━┳━━━━━━━━━━━┓
-┃ #  ┃ Backup ID           ┃ Local ┃ S3  ┃ Size      ┃
-┡━━━━╇━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━╇━━━━━╇━━━━━━━━━━━┩
-│ 1  │ 2024-02-05_05-15-00 │ +     │ +   │ 125.3 MB  │
-│ 2  │ 2024-02-04_05-15-00 │ +     │ +   │ 124.8 MB  │
-│ 3  │ 2024-02-03_05-15-00 │ -     │ +   │ 123.5 MB  │
-└────┴─────────────────────┴───────┴─────┴───────────┘
+2024-02-03_05-15-00                 0 bytes  (off-site only)
+2024-02-04_05-15-00         130862284 bytes
+2024-02-05_05-15-00         131386163 bytes
 ```
 
 #### Backup-Details anzeigen
@@ -387,7 +385,7 @@ Queue (Bull, gleiche Redis-Datenbank) entfallen wie bei jedem Neustart. Schlaegt
 Instanzen neu starten. Die `nocodb restore-*`-Befehle schreiben ueber die API und
 brauchen das nicht.
 
-#### Daten-Dateien wiederherstellen (nach restore-dump)
+#### Daten-Dateien wiederherstellen (nach dem Datenbank-Restore)
 
 ```bash
 docker exec -it ${STACK_NAME}_BACKUP backuphelper restore 2024-02-05_05-15-00 --only nocodb-data
@@ -400,7 +398,7 @@ Original-Pfaden, passend zu den Referenzen in der wiederhergestellten Datenbank.
 **Wichtig:**
 
 - NocoDB muss waehrend der Wiederherstellung gestoppt sein
-- Verwenden nach `restore-dump` für eine vollstaendige Disaster Recovery
+- Zusammen mit `restore <id> --only database` für eine vollstaendige Disaster Recovery
 - Nur relevant für lokale Attachments (nicht bei S3-Storage)
 - Der Backup-Sidecar laeuft als root (`user: "0:0"` in den Compose-Dateien, mit
   auf `DAC_OVERRIDE` und `FOWNER` reduzierten Capabilities). nocodb-server laeuft
@@ -456,7 +454,7 @@ docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-records 2024-02-05_
 **Hinweis:** Tabellen muessen in NocoDB bereits mit kompatiblem Schema existieren.
 Records werden via API eingefuegt - bestehende Daten bleiben erhalten (keine Deduplizierung).
 
-#### Attachments wiederherstellen (nach restore-dump)
+#### Attachments wiederherstellen (nach dem Datenbank-Restore)
 
 ```bash
 # Alle Attachments wiederherstellen
@@ -470,7 +468,7 @@ docker exec -it ${STACK_NAME}_BACKUP backuphelper nocodb restore-attachments 202
     --base "Meine_Base" --table "Kunden"
 ```
 
-**Hinweis:** Dieser Befehl ist für die Verwendung nach `restore-dump` gedacht.
+**Hinweis:** Dieser Befehl ist für die Verwendung nach `restore <id> --only database` gedacht.
 Die Records existieren bereits in der Datenbank mit ihren Original-IDs.
 Attachments werden via NocoDB Storage API hochgeladen und mit den bestehenden Records verknuepft.
 Jedes Attachment bekommt die Datei, die der Export fuer genau dieses Attachment gesichert
@@ -510,7 +508,7 @@ docker compose logs -f nocodb-server
 
 **Hinweis zu Attachments bei Disaster Recovery:**
 
-- **Attachments lokal (Standard):** `restore-files` stellt alle Dateien 1:1 an den
+- **Attachments lokal (Standard):** `restore <id> --only nocodb-data` stellt alle Dateien 1:1 an den
   Original-Pfaden wieder her. Die Referenzen in der Datenbank stimmen sofort.
 - **Attachments auf S3 (NC_S3_BUCKET_NAME):** Keine Aktion noetig - Dateien liegen
   weiterhin auf S3. `NOCODB_BACKUP_INCLUDE_FILES=false` setzen.
@@ -724,13 +722,15 @@ docker logs ${STACK_NAME}_BACKUP
 #### S3-Upload schlaegt fehl
 
 ```bash
-# S3-Verbindung testen
-docker exec ${STACK_NAME}_BACKUP python -c "
-from storage.s3_client import S3Storage
-from config import Settings
-s3 = S3Storage(Settings())
-print(s3.list_backups())
-"
+# S3-Ziel lesen: `list` zeigt auch Snapshots, die nur auf S3 liegen ("off-site only").
+# Ist S3 nicht erreichbar, steht dort "could not list off-site s3 destination: ..."
+docker exec ${STACK_NAME}_BACKUP backuphelper list
+
+# Wirksame Konfiguration (Endpoint, Bucket, Prefix, Region; Secrets geschwaerzt)
+docker exec ${STACK_NAME}_BACKUP backuphelper config
+
+# Upload-Fehler der letzten Laeufe ("upload to S3Destination failed", "s3 destination ... unavailable")
+docker logs ${STACK_NAME}_BACKUP 2>&1 | grep -i s3 | tail -20
 
 # Haeufige Ursachen:
 # - Credentials falsch
@@ -861,7 +861,8 @@ Full database dump for disaster recovery:
 - **Format:** Compressed tar archive (`nocodb-data.tar.gz`)
 - **Contents:** All files from the NocoDB data directory (uploads, attachments)
 - **Restore:** Direct extraction to the NocoDB data directory
-- **Recommendation:** For disaster recovery together with `restore-dump`
+- **Recommendation:** For disaster recovery together with the database restore
+  (`restore <id> --only database`)
 
 Enable: `NOCODB_BACKUP_INCLUDE_FILES=true` (default).
 Disable when attachments are stored on S3 (`NC_S3_BUCKET_NAME`).
@@ -946,9 +947,11 @@ NOCODB_BACKUP_RETENTION_COUNT=30
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `NOCODB_BACKUP_SCHEDULE_ENABLED` | `true` | Enable backup scheduler |
 | `NOCODB_BACKUP_SCHEDULE_MODE` | `cron` | `cron` or `interval` |
 | `NOCODB_BACKUP_RETENTION_COUNT` | `30` | Number of backups to retain |
+
+The scheduler runs as long as the container of the `backup` profile runs. For no
+scheduled backups, do not start that profile.
 
 #### Schedule Modes
 
@@ -1004,10 +1007,9 @@ NOCODB_BACKUP_KEEP_LOCAL_ARCHIVE=true
 #### Alerting
 
 ```bash
-# Enable alerting
-NOCODB_BACKUP_ALERT_ENABLED=true
+# Channels, comma-separated (empty = no alerting)
+NOCODB_BACKUP_ALERT_CHANNELS=email,teams
 NOCODB_BACKUP_ALERT_LEVEL=warnings  # errors, warnings, all
-NOCODB_BACKUP_ALERT_CHANNELS=email,teams  # comma-separated
 
 # Email (uses SMTP_HOST, SMTP_USER, SMTP_PASSWORD and SMTP_FROM)
 NOCODB_BACKUP_ALERT_EMAIL=admin@example.com
@@ -1065,13 +1067,9 @@ docker exec ${STACK_NAME}_BACKUP backuphelper list
 **Output:**
 
 ```text
-┏━━━━┳━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━┳━━━━━┳━━━━━━━━━━━┓
-┃ #  ┃ Backup ID           ┃ Local ┃ S3  ┃ Size      ┃
-┡━━━━╇━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━╇━━━━━╇━━━━━━━━━━━┩
-│ 1  │ 2024-02-05_05-15-00 │ +     │ +   │ 125.3 MB  │
-│ 2  │ 2024-02-04_05-15-00 │ +     │ +   │ 124.8 MB  │
-│ 3  │ 2024-02-03_05-15-00 │ -     │ +   │ 123.5 MB  │
-└────┴─────────────────────┴───────┴─────┴───────────┘
+2024-02-03_05-15-00                 0 bytes  (off-site only)
+2024-02-04_05-15-00         130862284 bytes
+2024-02-05_05-15-00         131386163 bytes
 ```
 
 #### Show Backup Details
@@ -1169,7 +1167,7 @@ as on every restart. If it fails (warning `NocoDB's Redis cache was not emptied`
 restore stands - restart all instances then. The `nocodb restore-*` commands write
 through the API and do not need it.
 
-#### Restore Data Files (after restore-dump)
+#### Restore Data Files (after the database restore)
 
 ```bash
 docker exec -it ${STACK_NAME}_BACKUP backuphelper restore 2024-02-05_05-15-00 --only nocodb-data
@@ -1182,7 +1180,7 @@ matching the references in the restored database.
 **Important:**
 
 - NocoDB must be stopped during restoration
-- Use after `restore-dump` for a complete disaster recovery
+- Together with `restore <id> --only database` for a complete disaster recovery
 - Only relevant for local attachments (not for S3 storage)
 - The backup sidecar runs as root (`user: "0:0"` in the compose files, with
   capabilities cut down to `DAC_OVERRIDE` and `FOWNER`). nocodb-server runs as
@@ -1237,7 +1235,7 @@ docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-records 2024-02-05_
 **Note:** Tables must already exist in NocoDB with a compatible schema.
 Records are inserted via API - existing data is preserved (no deduplication).
 
-#### Restore Attachments (after restore-dump)
+#### Restore Attachments (after the database restore)
 
 ```bash
 # Restore all attachments
@@ -1251,7 +1249,7 @@ docker exec -it ${STACK_NAME}_BACKUP backuphelper nocodb restore-attachments 202
     --base "My_Base" --table "Customers"
 ```
 
-**Note:** This command is intended for use after `restore-dump`.
+**Note:** This command is intended for use after `restore <id> --only database`.
 Records already exist in the database with their original IDs.
 Attachments are uploaded via the NocoDB Storage API and linked to existing records.
 Every attachment gets the file the export saved for exactly that attachment
@@ -1291,7 +1289,7 @@ docker compose logs -f nocodb-server
 
 **Note on attachments during disaster recovery:**
 
-- **Attachments local (default):** `restore-files` restores all files 1:1 at their
+- **Attachments local (default):** `restore <id> --only nocodb-data` restores all files 1:1 at their
   original paths. Database references match immediately.
 - **Attachments on S3 (NC_S3_BUCKET_NAME):** No action needed - files remain
   on S3. Set `NOCODB_BACKUP_INCLUDE_FILES=false`.
@@ -1504,13 +1502,15 @@ docker logs ${STACK_NAME}_BACKUP
 #### S3 Upload Fails
 
 ```bash
-# Test S3 connection
-docker exec ${STACK_NAME}_BACKUP python -c "
-from storage.s3_client import S3Storage
-from config import Settings
-s3 = S3Storage(Settings())
-print(s3.list_backups())
-"
+# Read the S3 target: `list` also shows snapshots that live only on S3 ("off-site only").
+# If S3 is unreachable, it says "could not list off-site s3 destination: ..."
+docker exec ${STACK_NAME}_BACKUP backuphelper list
+
+# Effective configuration (endpoint, bucket, prefix, region; secrets redacted)
+docker exec ${STACK_NAME}_BACKUP backuphelper config
+
+# Upload errors of recent runs ("upload to S3Destination failed", "s3 destination ... unavailable")
+docker logs ${STACK_NAME}_BACKUP 2>&1 | grep -i s3 | tail -20
 
 # Common causes:
 # - Wrong credentials

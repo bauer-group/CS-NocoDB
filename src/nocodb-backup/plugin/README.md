@@ -33,8 +33,8 @@ Config (in `BACKUP_CONFIG_JSON`, secrets via `${VAR}`):
   "include_records": true, "include_attachments": true, "enabled": true }
 ```
 
-Skips cleanly (no component) when `enabled` is false or the token is empty — so
-`BACKUP_API_EXPORT=false` is just an unset token.
+Skips cleanly (no component) when `enabled` is false (`NOCODB_BACKUP_API_EXPORT=false`)
+or the token is empty (`NOCODB_API_TOKEN` unset).
 
 A token NocoDB rejects fails the component (the base list is the root of the
 export). Since BackupHelper 1.7.7 that ends the run in `error`: `--now` exits 1,

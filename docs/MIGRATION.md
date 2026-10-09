@@ -378,7 +378,7 @@ docker exec ${STACK_NAME}_DATABASE vacuumdb -U nocodb --all --analyze-in-stages
 docker compose -f docker-compose.traefik.yml --profile backup up -d nocodb-backup
 
 # Test-Backup ausfuehren
-docker exec ${STACK_NAME}_BACKUP python main.py --now
+docker exec ${STACK_NAME}_BACKUP backuphelper --now
 ```
 
 ---
