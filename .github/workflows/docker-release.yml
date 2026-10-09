@@ -106,18 +106,81 @@ jobs:
       check-script: 'tests/backup-roundtrip/check.sh'
     secrets: inherit
 
+  # The same round trip on the cluster stack (docker-compose.cluster.yml:
+  # HAProxy, nocodb-server-1..4, Redis), with tests/backup-roundtrip/cluster/
+  # docker-compose.ci.yml merged over it for a runner without Traefik. The
+  # restore runs while every instance keeps serving, the case the sidecar's
+  # post_restore hook exists for: the instances share their metadata cache in
+  # Redis, and the mutation also drops a field that only an emptied cache
+  # brings back. The check then asks every instance directly.
+
+  backup-roundtrip-cluster:
+    name: 🧪 Backup Round Trip (Cluster)
+    needs: [validate-compose, validate-scripts]
+    permissions:
+      contents: read
+      packages: read
+    uses: bauer-group/automation-templates/.github/workflows/modules-backup-roundtrip-test.yml@main
+    with:
+      compose-files: '["docker-compose.cluster.yml", "tests/backup-roundtrip/cluster/docker-compose.ci.yml"]'
+      profiles: 'backup'
+      # Stage S of .env.example (4 instances), sized for a GitHub-hosted
+      # runner (4 cores, 16 GB) instead of a 16-core host: no CPU limit above
+      # the runner's cores (Docker rejects it), memory ceilings of 9.25 GB in
+      # all (4 x 1.5 GB NocoDB, 2 GB PostgreSQL, 0.5 GB Redis, 0.25 GB HAProxy,
+      # 0.5 GB init). Compose creates the proxy network (CI override).
+      # Plain-HTTP site URL, no mail server, no scheduled backup during the
+      # test - as in the single-instance round trip.
+      env-overrides: |
+        STACK_NAME=nocodb_cluster_roundtrip
+        PROXY_NETWORK=nocodb_cluster_roundtrip_proxy
+        NC_SITE_URL=http://localhost:8080
+        NOCODB_CPU_LIMIT=1.0
+        NOCODB_MEMORY_LIMIT=1536M
+        POSTGRES_CPU_LIMIT=2.0
+        POSTGRES_MEMORY_LIMIT=2G
+        PG_SHARED_BUFFERS_CLUSTER=256MB
+        PG_EFFECTIVE_CACHE_SIZE_CLUSTER=1GB
+        PG_WORK_MEM_CLUSTER=4MB
+        PG_MAINTENANCE_WORK_MEM_CLUSTER=64MB
+        REDIS_CPU_LIMIT=0.5
+        REDIS_MEMORY_LIMIT=512M
+        REDIS_MEMORYLIMIT=256mb
+        HAPROXY_CPU_LIMIT=0.5
+        HAPROXY_MEMORY_LIMIT=256M
+        SMTP_HOST=
+        NOCODB_BACKUP_SCHEDULE_MODE=interval
+        NOCODB_BACKUP_SCHEDULE_INTERVAL_HOURS=24
+      generated-secrets: 'DATABASE_PASSWORD NC_AUTH_JWT_SECRET HAPROXY_STATS_PASSWORD'
+      # One build for all instances: they share one image reference.
+      build-images: |
+        [
+          {"service": "nocodb-server-1", "context": "src/nocodb"},
+          {"service": "nocodb-init", "context": "src/nocodb-init"},
+          {"service": "nocodb-backup", "context": "src/nocodb-backup"}
+        ]
+      backup-service: 'nocodb-backup'
+      require-components: 'database nocodb-data nocodb'
+      # No services-to-stop-before-restore on purpose: see above.
+      seed-script: 'tests/backup-roundtrip/cluster/seed.sh'
+      mutate-script: 'tests/backup-roundtrip/cluster/mutate.sh'
+      check-script: 'tests/backup-roundtrip/cluster/check.sh'
+      artifact-name: 'backup-roundtrip-cluster-diagnostics'
+    secrets: inherit
+
   # ============================================
   # Release Job (only on main branch push)
   # ============================================
 
   release:
     name: 📦 Create Semantic Release
-    needs: [validate-compose, validate-scripts, backup-roundtrip]
+    needs: [validate-compose, validate-scripts, backup-roundtrip, backup-roundtrip-cluster]
     if: |
       (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
       needs.validate-compose.result == 'success' &&
       needs.validate-scripts.result == 'success' &&
-      needs.backup-roundtrip.result == 'success'
+      needs.backup-roundtrip.result == 'success' &&
+      needs.backup-roundtrip-cluster.result == 'success'
     uses: bauer-group/automation-templates/.github/workflows/modules-semantic-release.yml@main
     with:
       target-branch: 'main'
