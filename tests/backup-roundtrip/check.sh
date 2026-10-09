@@ -17,23 +17,10 @@ set -euo pipefail
 # shellcheck source=tests/backup-roundtrip/common.sh
 source "$(dirname "$0")/common.sh"
 
-case "${ROUNDTRIP_EXPECT:?set by the round-trip module}" in
-  present) WANT=1 ;;
-  absent)  WANT=0 ;;
-  *) echo "unknown ROUNDTRIP_EXPECT '$ROUNDTRIP_EXPECT'" >&2; exit 2 ;;
-esac
+WANT=$(expected_count)
 FAILED=0
 # The seeded contents, one per line and sorted, to compare file sets with.
 EXPECTED=$(printf '%s\n' "${ATTACHMENT_CONTENTS[@]}" | sort)
-
-expect_count() {
-  local what="$1" got="$2" want="${3:-$WANT}"
-  if [ "$got" = "$want" ]; then
-    echo "ok   $what: $got (expected $want)"
-  else
-    echo "FAIL $what: $got (expected $want)"; FAILED=1
-  fi
-}
 
 NOCODB_URL=$(nocodb_url)
 NC_TOKEN=$(sidecar_token)
@@ -51,7 +38,7 @@ expect_count "attachment files" "$FILE_COUNT" "$WANT_FILES"
 if [ "$ROUNDTRIP_EXPECT" = "present" ] && [ "$FILE_COUNT" = "$WANT_FILES" ]; then
   # stdin from /dev/null: docker compose exec would read the file list.
   CONTENTS=$(while IFS= read -r file; do
-      docker compose exec -T nocodb-server cat "$file" < /dev/null; echo
+      docker compose exec -T "$NOCODB_FILES_SERVICE" cat "$file" < /dev/null; echo
     done <<< "$FILES" | sort)
   if [ "$CONTENTS" = "$EXPECTED" ]; then
     echo "ok   attachment file contents: as seeded"
@@ -62,10 +49,7 @@ fi
 
 # -- application: NocoDB serves the record's attachments -----------------------
 if [ "$ROUNDTRIP_EXPECT" = "present" ] && [ "$FAILED" -eq 0 ]; then
-  SERVED=$(jq -er '.list[0].Files[] | .signedPath // .path' <<< "$RECORDS" \
-    | while IFS= read -r link; do
-        curl --silent --show-error --fail --max-time 60 "${NOCODB_URL}/${link#/}"; echo
-      done | sort)
+  SERVED=$(served_attachments "$RECORDS")
   if [ "$SERVED" = "$EXPECTED" ]; then
     echo "ok   NocoDB serves the attachments back"
   else
