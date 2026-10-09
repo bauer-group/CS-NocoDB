@@ -78,12 +78,18 @@ def open_export(snapshot_id: str, *, job_name: Optional[str] = None) -> Iterator
     if manifest.archive_sha256 and sha256_file(artifact) != manifest.archive_sha256:
         raise SnapshotError(f"snapshot {snapshot_id} failed its sha256 integrity check")
 
-    comp = next((c for c in manifest.components if c.kind == "nocodb" and not c.error), None)
+    exports = [c for c in manifest.components if c.kind == "nocodb"]
+    comp = next((c for c in exports if not c.error), None)
     if comp is None:
+        if exports:
+            raise SnapshotError(
+                f"the NocoDB REST export of snapshot {snapshot_id} failed when this "
+                f"backup ran and holds no data: {exports[0].error}"
+            )
         raise SnapshotError(
             f"snapshot {snapshot_id} contains no NocoDB REST export — the API export "
-            "was not captured when this backup ran (check BACKUP_API_EXPORT=true AND "
-            "that NOCODB_API_TOKEN was set; an unset token skips the export)"
+            "was not captured when this backup ran (check NOCODB_BACKUP_API_EXPORT=true "
+            "and that NOCODB_API_TOKEN was set; an unset token skips the export)"
         )
 
     with tempfile.TemporaryDirectory(prefix="nocodb-restore-") as td:
