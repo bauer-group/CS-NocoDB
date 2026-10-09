@@ -255,7 +255,12 @@ Bis BackupHelper 1.7.6 endete ein Lauf mit fehlgeschlagener Komponente nur in `w
 
 ### CLI-Befehle
 
-Der Backup-Container bietet ein CLI für manuelle Operationen:
+Der Backup-Container bietet ein CLI für manuelle Operationen.
+
+`restore` und `nocodb restore-*` fragen vor dem Schreiben nach einer Bestaetigung, daher
+`docker exec -it`. Ohne Terminal (`docker exec` ohne `-i`, Skripte, Cron) gilt die Frage
+als verneint: Der Befehl bricht mit `Aborted` und Exit-Code 1 ab, ohne etwas
+wiederherzustellen. In Skripten stattdessen `--force` angeben.
 
 #### Sofort-Backup ausfuehren
 
@@ -333,7 +338,7 @@ Manifest, die uebrigen lassen sich mit `restore <id> --only <name>` wiederherste
 
 ```bash
 docker compose stop nocodb-server
-docker exec ${STACK_NAME}_BACKUP backuphelper restore 2024-02-05_05-15-00 --only database
+docker exec -it ${STACK_NAME}_BACKUP backuphelper restore 2024-02-05_05-15-00 --only database
 docker compose start nocodb-server
 ```
 
@@ -353,7 +358,7 @@ vorhandenen Objekt ab. Vorher die Datenbank neu anlegen:
 docker compose stop nocodb-server
 docker exec ${STACK_NAME}_DATABASE psql -U nocodb -d postgres \
     -c 'DROP DATABASE nocodb WITH (FORCE)' -c 'CREATE DATABASE nocodb OWNER nocodb'
-docker exec ${STACK_NAME}_BACKUP backuphelper restore 2024-02-05_05-15-00 --only database
+docker exec -it ${STACK_NAME}_BACKUP backuphelper restore 2024-02-05_05-15-00 --only database
 ```
 
 **Cluster-Modus** (`docker-compose.cluster.yml`, `docker-compose.cluster-development.yml`):
@@ -365,7 +370,7 @@ Migrationen warten:
 ```bash
 docker compose -f docker-compose.cluster.yml stop \
     $(docker compose -f docker-compose.cluster.yml ps --services | grep '^nocodb-server-')
-docker exec ${STACK_NAME}_BACKUP backuphelper restore 2024-02-05_05-15-00 --only database
+docker exec -it ${STACK_NAME}_BACKUP backuphelper restore 2024-02-05_05-15-00 --only database
 docker compose -f docker-compose.cluster.yml up -d
 ```
 
@@ -385,7 +390,7 @@ brauchen das nicht.
 #### Daten-Dateien wiederherstellen (nach restore-dump)
 
 ```bash
-docker exec ${STACK_NAME}_BACKUP backuphelper restore 2024-02-05_05-15-00 --only nocodb-data
+docker exec -it ${STACK_NAME}_BACKUP backuphelper restore 2024-02-05_05-15-00 --only nocodb-data
 ```
 
 Stellt die NocoDB-Dateien (Uploads, Attachments) aus dem `nocodb-data.tar.gz` Archiv
@@ -407,16 +412,16 @@ Original-Pfaden, passend zu den Referenzen in der wiederhergestellten Datenbank.
 
 ```bash
 # Alle Bases und Tabellen aus Backup erstellen
-docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-schema 2024-02-05_05-15-00
+docker exec -it ${STACK_NAME}_BACKUP backuphelper nocodb restore-schema 2024-02-05_05-15-00
 
 # Nur eine bestimmte Base wiederherstellen
-docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-schema 2024-02-05_05-15-00 --base "Meine_Base"
+docker exec -it ${STACK_NAME}_BACKUP backuphelper nocodb restore-schema 2024-02-05_05-15-00 --base "Meine_Base"
 
 # Nur eine bestimmte Tabelle wiederherstellen
-docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-schema 2024-02-05_05-15-00 --base "Meine_Base" --table "Kunden"
+docker exec -it ${STACK_NAME}_BACKUP backuphelper nocodb restore-schema 2024-02-05_05-15-00 --base "Meine_Base" --table "Kunden"
 
 # Bereits existierende Tabellen ueberspringen
-docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-schema 2024-02-05_05-15-00 --skip-existing
+docker exec -it ${STACK_NAME}_BACKUP backuphelper nocodb restore-schema 2024-02-05_05-15-00 --skip-existing
 ```
 
 **Hinweise:**
@@ -432,16 +437,16 @@ docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-schema 2024-02-05_0
 
 ```bash
 # Alle Tabellen aller Bases wiederherstellen
-docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-records 2024-02-05_05-15-00
+docker exec -it ${STACK_NAME}_BACKUP backuphelper nocodb restore-records 2024-02-05_05-15-00
 
 # Nur eine bestimmte Base wiederherstellen
-docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-records 2024-02-05_05-15-00 --base "Meine_Base"
+docker exec -it ${STACK_NAME}_BACKUP backuphelper nocodb restore-records 2024-02-05_05-15-00 --base "Meine_Base"
 
 # Nur eine bestimmte Tabelle wiederherstellen
-docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-records 2024-02-05_05-15-00 --base "Meine_Base" --table "Kunden"
+docker exec -it ${STACK_NAME}_BACKUP backuphelper nocodb restore-records 2024-02-05_05-15-00 --base "Meine_Base" --table "Kunden"
 
 # Records MIT Attachments wiederherstellen
-docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-records 2024-02-05_05-15-00 \
+docker exec -it ${STACK_NAME}_BACKUP backuphelper nocodb restore-records 2024-02-05_05-15-00 \
     --base "Meine_Base" --with-attachments
 
 # Ohne Bestaetigung
@@ -455,13 +460,13 @@ Records werden via API eingefuegt - bestehende Daten bleiben erhalten (keine Ded
 
 ```bash
 # Alle Attachments wiederherstellen
-docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-attachments 2024-02-05_05-15-00
+docker exec -it ${STACK_NAME}_BACKUP backuphelper nocodb restore-attachments 2024-02-05_05-15-00
 
 # Nur Attachments einer bestimmten Base
-docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-attachments 2024-02-05_05-15-00 --base "Meine_Base"
+docker exec -it ${STACK_NAME}_BACKUP backuphelper nocodb restore-attachments 2024-02-05_05-15-00 --base "Meine_Base"
 
 # Nur Attachments einer bestimmten Tabelle
-docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-attachments 2024-02-05_05-15-00 \
+docker exec -it ${STACK_NAME}_BACKUP backuphelper nocodb restore-attachments 2024-02-05_05-15-00 \
     --base "Meine_Base" --table "Kunden"
 ```
 
@@ -491,10 +496,10 @@ docker compose -f docker-compose.traefik.yml --profile backup up -d --no-deps no
 docker exec ${STACK_NAME}_BACKUP backuphelper download 2024-02-05_05-15-00 /data/export  # exports archive+manifest; restore/verify auto-hydrate from S3
 
 # 4. Datenbank wiederherstellen
-docker exec ${STACK_NAME}_BACKUP backuphelper restore 2024-02-05_05-15-00 --only database
+docker exec -it ${STACK_NAME}_BACKUP backuphelper restore 2024-02-05_05-15-00 --only database
 
 # 5. Daten-Dateien wiederherstellen (Uploads/Attachments)
-docker exec ${STACK_NAME}_BACKUP backuphelper restore 2024-02-05_05-15-00 --only nocodb-data
+docker exec -it ${STACK_NAME}_BACKUP backuphelper restore 2024-02-05_05-15-00 --only nocodb-data
 
 # 6. NocoDB starten
 docker compose -f docker-compose.traefik.yml up -d nocodb-server
@@ -534,10 +539,10 @@ docker compose -f docker-compose.traefik.yml --profile backup up -d nocodb-backu
 docker exec ${STACK_NAME}_BACKUP backuphelper download 2024-02-05_05-15-00 /data/export  # exports archive+manifest; restore/verify auto-hydrate from S3
 
 # 6. Tabellen-Schema wiederherstellen (erstellt Bases + Tabellen)
-docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-schema 2024-02-05_05-15-00
+docker exec -it ${STACK_NAME}_BACKUP backuphelper nocodb restore-schema 2024-02-05_05-15-00
 
 # 7. Records importieren (optional)
-docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-records 2024-02-05_05-15-00 --with-attachments
+docker exec -it ${STACK_NAME}_BACKUP backuphelper nocodb restore-records 2024-02-05_05-15-00 --with-attachments
 
 # 8. Virtuelle Spalten manuell nachbauen (Links, Lookups, Rollups, Formulas)
 ```
@@ -561,11 +566,11 @@ docker exec ${STACK_NAME}_BACKUP backuphelper show 2024-02-05_05-15-00
 docker exec ${STACK_NAME}_BACKUP backuphelper download 2024-02-05_05-15-00 /data/export  # exports archive+manifest; restore/verify auto-hydrate from S3
 
 # 3a. Bestimmte Tabelle MIT Attachments wiederherstellen
-docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-records 2024-02-05_05-15-00 \
+docker exec -it ${STACK_NAME}_BACKUP backuphelper nocodb restore-records 2024-02-05_05-15-00 \
     --base "Meine_Base" --table "Kunden" --with-attachments
 
 # 3b. Oder gesamte Base ohne Attachments (schneller)
-docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-records 2024-02-05_05-15-00 \
+docker exec -it ${STACK_NAME}_BACKUP backuphelper nocodb restore-records 2024-02-05_05-15-00 \
     --base "Meine_Base"
 ```
 
@@ -592,7 +597,7 @@ docker exec -i ${STACK_NAME}_DATABASE pg_restore --clean --if-exists --no-owner 
     --single-transaction -U nocodb -d nocodb < /tmp/restore/database.dump
 
 # Danach Attachments wiederherstellen (falls im Backup enthalten)
-docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-attachments 2024-02-05_05-15-00
+docker exec -it ${STACK_NAME}_BACKUP backuphelper nocodb restore-attachments 2024-02-05_05-15-00
 ```
 
 ### Development mit MinIO
@@ -1034,7 +1039,12 @@ component and do not affect the status.
 
 ### CLI Commands
 
-The backup container provides a CLI for manual operations:
+The backup container provides a CLI for manual operations.
+
+`restore` and `nocodb restore-*` ask for confirmation before they write, hence
+`docker exec -it`. Without a terminal (`docker exec` without `-i`, scripts, cron) the
+question counts as declined: the command stops with `Aborted` and exit code 1 and
+restores nothing. Pass `--force` in scripts instead.
 
 #### Run Immediate Backup
 
@@ -1111,7 +1121,7 @@ restored with `restore <id> --only <name>`.
 
 ```bash
 docker compose stop nocodb-server
-docker exec ${STACK_NAME}_BACKUP backuphelper restore 2024-02-05_05-15-00 --only database
+docker exec -it ${STACK_NAME}_BACKUP backuphelper restore 2024-02-05_05-15-00 --only database
 docker compose start nocodb-server
 ```
 
@@ -1131,7 +1141,7 @@ already exists. Recreate the database first:
 docker compose stop nocodb-server
 docker exec ${STACK_NAME}_DATABASE psql -U nocodb -d postgres \
     -c 'DROP DATABASE nocodb WITH (FORCE)' -c 'CREATE DATABASE nocodb OWNER nocodb'
-docker exec ${STACK_NAME}_BACKUP backuphelper restore 2024-02-05_05-15-00 --only database
+docker exec -it ${STACK_NAME}_BACKUP backuphelper restore 2024-02-05_05-15-00 --only database
 ```
 
 **Cluster mode** (`docker-compose.cluster.yml`, `docker-compose.cluster-development.yml`):
@@ -1143,7 +1153,7 @@ migrations:
 ```bash
 docker compose -f docker-compose.cluster.yml stop \
     $(docker compose -f docker-compose.cluster.yml ps --services | grep '^nocodb-server-')
-docker exec ${STACK_NAME}_BACKUP backuphelper restore 2024-02-05_05-15-00 --only database
+docker exec -it ${STACK_NAME}_BACKUP backuphelper restore 2024-02-05_05-15-00 --only database
 docker compose -f docker-compose.cluster.yml up -d
 ```
 
@@ -1162,7 +1172,7 @@ through the API and do not need it.
 #### Restore Data Files (after restore-dump)
 
 ```bash
-docker exec ${STACK_NAME}_BACKUP backuphelper restore 2024-02-05_05-15-00 --only nocodb-data
+docker exec -it ${STACK_NAME}_BACKUP backuphelper restore 2024-02-05_05-15-00 --only nocodb-data
 ```
 
 Restores NocoDB files (uploads, attachments) from the `nocodb-data.tar.gz` archive
@@ -1183,16 +1193,16 @@ matching the references in the restored database.
 
 ```bash
 # Create all bases and tables from backup
-docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-schema 2024-02-05_05-15-00
+docker exec -it ${STACK_NAME}_BACKUP backuphelper nocodb restore-schema 2024-02-05_05-15-00
 
 # Restore only a specific base
-docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-schema 2024-02-05_05-15-00 --base "My_Base"
+docker exec -it ${STACK_NAME}_BACKUP backuphelper nocodb restore-schema 2024-02-05_05-15-00 --base "My_Base"
 
 # Restore only a specific table
-docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-schema 2024-02-05_05-15-00 --base "My_Base" --table "Customers"
+docker exec -it ${STACK_NAME}_BACKUP backuphelper nocodb restore-schema 2024-02-05_05-15-00 --base "My_Base" --table "Customers"
 
 # Skip already existing tables
-docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-schema 2024-02-05_05-15-00 --skip-existing
+docker exec -it ${STACK_NAME}_BACKUP backuphelper nocodb restore-schema 2024-02-05_05-15-00 --skip-existing
 ```
 
 **Notes:**
@@ -1208,16 +1218,16 @@ docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-schema 2024-02-05_0
 
 ```bash
 # Restore all tables of all bases
-docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-records 2024-02-05_05-15-00
+docker exec -it ${STACK_NAME}_BACKUP backuphelper nocodb restore-records 2024-02-05_05-15-00
 
 # Restore only a specific base
-docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-records 2024-02-05_05-15-00 --base "My_Base"
+docker exec -it ${STACK_NAME}_BACKUP backuphelper nocodb restore-records 2024-02-05_05-15-00 --base "My_Base"
 
 # Restore only a specific table
-docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-records 2024-02-05_05-15-00 --base "My_Base" --table "Customers"
+docker exec -it ${STACK_NAME}_BACKUP backuphelper nocodb restore-records 2024-02-05_05-15-00 --base "My_Base" --table "Customers"
 
 # Restore records WITH attachments
-docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-records 2024-02-05_05-15-00 \
+docker exec -it ${STACK_NAME}_BACKUP backuphelper nocodb restore-records 2024-02-05_05-15-00 \
     --base "My_Base" --with-attachments
 
 # Without confirmation
@@ -1231,13 +1241,13 @@ Records are inserted via API - existing data is preserved (no deduplication).
 
 ```bash
 # Restore all attachments
-docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-attachments 2024-02-05_05-15-00
+docker exec -it ${STACK_NAME}_BACKUP backuphelper nocodb restore-attachments 2024-02-05_05-15-00
 
 # Only attachments of a specific base
-docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-attachments 2024-02-05_05-15-00 --base "My_Base"
+docker exec -it ${STACK_NAME}_BACKUP backuphelper nocodb restore-attachments 2024-02-05_05-15-00 --base "My_Base"
 
 # Only attachments of a specific table
-docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-attachments 2024-02-05_05-15-00 \
+docker exec -it ${STACK_NAME}_BACKUP backuphelper nocodb restore-attachments 2024-02-05_05-15-00 \
     --base "My_Base" --table "Customers"
 ```
 
@@ -1267,10 +1277,10 @@ docker compose -f docker-compose.traefik.yml --profile backup up -d --no-deps no
 docker exec ${STACK_NAME}_BACKUP backuphelper download 2024-02-05_05-15-00 /data/export  # exports archive+manifest; restore/verify auto-hydrate from S3
 
 # 4. Restore database
-docker exec ${STACK_NAME}_BACKUP backuphelper restore 2024-02-05_05-15-00 --only database
+docker exec -it ${STACK_NAME}_BACKUP backuphelper restore 2024-02-05_05-15-00 --only database
 
 # 5. Restore data files (uploads/attachments)
-docker exec ${STACK_NAME}_BACKUP backuphelper restore 2024-02-05_05-15-00 --only nocodb-data
+docker exec -it ${STACK_NAME}_BACKUP backuphelper restore 2024-02-05_05-15-00 --only nocodb-data
 
 # 6. Start NocoDB
 docker compose -f docker-compose.traefik.yml up -d nocodb-server
@@ -1310,10 +1320,10 @@ docker compose -f docker-compose.traefik.yml --profile backup up -d nocodb-backu
 docker exec ${STACK_NAME}_BACKUP backuphelper download 2024-02-05_05-15-00 /data/export  # exports archive+manifest; restore/verify auto-hydrate from S3
 
 # 6. Restore table schema (creates bases + tables)
-docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-schema 2024-02-05_05-15-00
+docker exec -it ${STACK_NAME}_BACKUP backuphelper nocodb restore-schema 2024-02-05_05-15-00
 
 # 7. Import records (optional)
-docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-records 2024-02-05_05-15-00 --with-attachments
+docker exec -it ${STACK_NAME}_BACKUP backuphelper nocodb restore-records 2024-02-05_05-15-00 --with-attachments
 
 # 8. Manually recreate virtual columns (Links, Lookups, Rollups, Formulas)
 ```
@@ -1337,11 +1347,11 @@ docker exec ${STACK_NAME}_BACKUP backuphelper show 2024-02-05_05-15-00
 docker exec ${STACK_NAME}_BACKUP backuphelper download 2024-02-05_05-15-00 /data/export  # exports archive+manifest; restore/verify auto-hydrate from S3
 
 # 3a. Restore specific table WITH attachments
-docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-records 2024-02-05_05-15-00 \
+docker exec -it ${STACK_NAME}_BACKUP backuphelper nocodb restore-records 2024-02-05_05-15-00 \
     --base "My_Base" --table "Customers" --with-attachments
 
 # 3b. Or restore entire base without attachments (faster)
-docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-records 2024-02-05_05-15-00 \
+docker exec -it ${STACK_NAME}_BACKUP backuphelper nocodb restore-records 2024-02-05_05-15-00 \
     --base "My_Base"
 ```
 
@@ -1368,7 +1378,7 @@ docker exec -i ${STACK_NAME}_DATABASE pg_restore --clean --if-exists --no-owner 
     --single-transaction -U nocodb -d nocodb < /tmp/restore/database.dump
 
 # Then restore attachments (if included in backup)
-docker exec ${STACK_NAME}_BACKUP backuphelper nocodb restore-attachments 2024-02-05_05-15-00
+docker exec -it ${STACK_NAME}_BACKUP backuphelper nocodb restore-attachments 2024-02-05_05-15-00
 ```
 
 ### Development with MinIO
