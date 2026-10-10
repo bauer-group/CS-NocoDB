@@ -73,7 +73,7 @@ jobs:
     permissions:
       contents: read
       packages: read
-    uses: bauer-group/automation-templates/.github/workflows/modules-backup-roundtrip-test.yml@main
+    uses: bauer-group/automation-templates/.github/workflows/modules-backup-roundtrip-test.yml@feat/roundtrip-multi-job
     with:
       compose-file: 'docker-compose.local.yml'
       profiles: 'backup'
@@ -122,7 +122,7 @@ jobs:
     permissions:
       contents: read
       packages: read
-    uses: bauer-group/automation-templates/.github/workflows/modules-backup-roundtrip-test.yml@main
+    uses: bauer-group/automation-templates/.github/workflows/modules-backup-roundtrip-test.yml@feat/roundtrip-multi-job
     with:
       compose-files: '["docker-compose.cluster.yml", "tests/backup-roundtrip/cluster/docker-compose.ci.yml"]'
       profiles: 'backup'
@@ -199,7 +199,7 @@ jobs:
     permissions:
       contents: read
       packages: read
-    uses: bauer-group/automation-templates/.github/workflows/modules-backup-roundtrip-test.yml@main
+    uses: bauer-group/automation-templates/.github/workflows/modules-backup-roundtrip-test.yml@feat/roundtrip-multi-job
     with:
       compose-files: ${{ matrix.compose-files }}
       profiles: 'backup'
@@ -253,7 +253,7 @@ jobs:
     permissions:
       contents: read
       packages: read
-    uses: bauer-group/automation-templates/.github/workflows/modules-backup-roundtrip-test.yml@main
+    uses: bauer-group/automation-templates/.github/workflows/modules-backup-roundtrip-test.yml@feat/roundtrip-multi-job
     with:
       compose-files: '["docker-compose.cluster.yml", "tests/backup-roundtrip/cluster/docker-compose.ci.yml"]'
       profiles: 'backup'
