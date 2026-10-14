@@ -466,9 +466,11 @@ services:
       # restore` of a database dump the sidecar empties it, so instances that
       # keep running do not serve the metadata cache of the old database.
       NOCODB_REDIS_URL: redis://redis-server:6379
-      # dump_format "custom": the engine restores it with pg_restore --clean
-      # --if-exists, which also works over a live database. A "plain" dump is
-      # replayed with psql and stops at the first table that already exists.
+      # dump_format "custom": restored with pg_restore --clean --if-exists, also
+      # over a live database. Over one that changed since the snapshot (tables
+      # added, a newer NocoDB) the engine first drops the base schemas and what
+      # the snapshot lacks, in one transaction (docs/BACKUP.md). A "plain" dump
+      # is replayed with psql and stops at the first table that already exists.
       # Alert mail: the engine speaks STARTTLS ("tls"), not implicit TLS, so it
       # uses NOCODB_BACKUP_SMTP_PORT/_STARTTLS - not NocoDB's SMTP_PORT/SMTP_TLS.
       BACKUP_CONFIG_JSON: |

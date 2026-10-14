@@ -66,7 +66,7 @@ Vollstaendiger Datenbank-Dump für Disaster Recovery:
 
 - **Format:** PostgreSQL Custom-Format (`database.dump`, komprimiert)
 - **Inhalt:** Komplette Datenbankstruktur und Daten
-- **Wiederherstellung:** Mit dem CLI-Tool (`pg_restore --clean --if-exists`), auch in eine laufende Datenbank
+- **Wiederherstellung:** Mit dem CLI-Tool (`backuphelper restore`), auch in eine laufende oder seit dem Snapshot veraenderte Datenbank
 - **Empfehlung:** Primaeres Backup für vollstaendige Wiederherstellung
 
 #### 2. NocoDB Data Files (tar.gz)
@@ -342,10 +342,96 @@ docker compose start nocodb-server
 
 **WARNUNG:** Dies ueberschreibt die gesamte Datenbank!
 
-Der Dump liegt im Custom-Format vor (`database.dump`); die Engine spielt ihn mit
-`pg_restore --clean --if-exists --single-transaction` ein, ersetzt also alle
-Objekte aus dem Backup auch in einer laufenden Datenbank. NocoDB vorher stoppen,
-damit keine offenen Verbindungen den Restore blockieren.
+Der Dump liegt im Custom-Format vor (`database.dump`). In eine leere Datenbank oder eine
+mit dem Schema des Snapshots (nur Zeilen geaendert) spielt die Engine ihn mit
+`pg_restore --clean --if-exists --single-transaction` ein, ersetzt also alle Objekte aus
+dem Backup, auch in einer laufenden Datenbank. NocoDB vorher stoppen, damit keine offenen
+Verbindungen den Restore blockieren.
+
+**Datenbank seit dem Snapshot veraendert** (eine Tabelle in einer bestehenden Base
+angelegt, oder eine neuere NocoDB-Version hat ihre Metadaten-Tabellen migriert): Ab
+BackupHelper 1.10.4 ersetzt die Engine dann die Schemas des Snapshots in **einer**
+Transaktion. Sie loescht in `public` und in den Base-Schemas (eines je Base, nach der
+Base-ID benannt), was der Snapshot nicht enthaelt - Tabellen, Views, Sequenzen,
+Fremdschluessel, Funktionen, Prozeduren, Aggregate, Typen und Domains -, loescht die
+Base-Schemas ganz und spielt danach den Dump ein. Jeder Fehler rollt alles zurueck.
+BackupHelper 1.10.2 und 1.10.3 ersetzen bereits Tabellen, Views, Sequenzen,
+Fremdschluessel, Typen und Domains und loeschen die Base-Schemas ganz, lassen aber
+Funktionen, Prozeduren und Aggregate in `public` stehen (und scheitern unter PostgreSQL 16
+und aelter, siehe unten). Bis BackupHelper 1.10.1 brach ein solcher Restore ab und rollte
+zurueck (`cannot drop schema ... because other objects depend on it`), oder er liess die
+Tabellen der neueren Version stehen, an deren Migration NocoDB beim naechsten Start
+scheiterte.
+
+Im Log steht dann `restoring ... by replacing the N relation(s) of schema(s) ...` und nach
+dem Commit `not in the snapshot, dropped: ...` mit allem, was nicht zurueckkommt. psql
+meldet mitgerissene Objekte mit `drop cascades to ...`, auch solche, die der Dump gleich
+wieder anlegt. Fuer NocoDB heisst das:
+
+- Tabellen, die seit dem Snapshot in einer bestehenden Base angelegt wurden, sind danach
+  weg; das Log nennt sie.
+- Was Betreiber selbst in der NocoDB-Datenbank angelegt haben (Tabellen, Views,
+  Funktionen, etwa fuer BI) und nicht im Snapshot steht, loescht der Restore ebenso. In
+  anderen Schemas (etwa eine BI-View im Schema `bi`) betrifft das nur Objekte, die von
+  NocoDBs Tabellen abhaengen: Ist ein solches Objekt der einzige Unterschied, scheitert der
+  Restore und rollt zurueck (PostgreSQL nennt das Objekt im `DETAIL`) - es dann loeschen
+  und erneut einspielen. Bei jedem anderen Unterschied loescht der Restore es mit, das Log
+  nennt es. Eigene Objekte deshalb in einer eigenen Datenbank halten.
+- Bases, die nach dem Snapshot angelegt wurden, liegen in Schemas, die der Snapshot nicht
+  enthaelt: Sie bleiben in der Datenbank, NocoDB zeigt sie aber nicht mehr an. Die Schemas
+  listet `docker exec ${STACK_NAME}_DATABASE psql -U nocodb -d nocodb -c '\dn'`; ein
+  Base-Schema (nach der Base-ID benannt, etwa `p5jsz0gcohesakm`), dessen ID NocoDB nicht
+  mehr fuehrt (`id` in `/api/v2/meta/bases`, siehe
+  [API-Export fehlerhaft](#api-export-fehlerhaft)), bei Bedarf dort mit
+  `-c 'DROP SCHEMA <base-id> CASCADE'` loeschen.
+
+**Upgrade zuruecknehmen:** Ein Snapshot von vor einem NocoDB-Upgrade laesst sich ueber die
+Datenbank der neueren Version einspielen. Startet die neuere Version danach, findet sie das
+Schema des Snapshots vor und migriert es erneut; dafuer reichen die Befehle oben (NocoDB
+stoppen, `restore <id> --only database`, `start`). Wer auch die Version zuruecknimmt, setzt
+`NOCODB_VERSION` auf das alte Release und startet statt mit `start` mit `up -d`, mit
+denselben `-f`-Angaben wie beim Deployment: `start` startet den vorhandenen Container mit
+seinem bisherigen Image, also wieder die neuere Version.
+
+```bash
+docker compose stop nocodb-server
+docker exec -it ${STACK_NAME}_BACKUP backuphelper restore 2024-02-05_05-15-00 --only database
+# NOCODB_VERSION in .env auf das alte Release setzen, dann:
+docker compose up -d nocodb-server
+```
+
+Im Cluster nur mit gestoppten Instanzen (siehe unten); die Befehle dort starten ohnehin mit
+`up -d`.
+
+**Platz fuer den Restore:** Ueber eine veraenderte Datenbank schreibt die Engine zuerst die
+Datenbank des Snapshots (`database.dump`) samt Daten als unkomprimiertes SQL-Skript in das
+Temp-Verzeichnis des Restores, `/tmp` im Container `nocodb-backup`. Etwa das Zwei- bis
+Dreifache des Snapshots einplanen. Die Compose-Dateien legen dort kein `tmpfs` an: `/tmp`
+liegt wie die Volumes des Stacks (auch `nocodb-backup-data`) auf der Docker-Platte des
+Hosts. Reicht der Platz dort nicht, entweder auf dieser Platte Platz schaffen oder dem
+Restore ein Verzeichnis auf einer anderen Platte geben - mit einem eigenen Container, mit
+denselben `-f`-Angaben wie beim Deployment. `--no-deps` verhindert, dass er den gestoppten
+`nocodb-server` startet; die Argumente nach `nocodb-backup` gehen an `backuphelper`:
+
+```bash
+docker compose --profile backup run --rm --no-deps \
+    -v /mnt/big/restore-tmp:/restore-tmp -e TMPDIR=/restore-tmp \
+    nocodb-backup restore 2024-02-05_05-15-00 --only database
+```
+
+Liegt das Volume `nocodb-backup-data` selbst auf einer anderen Platte, geht es auch im
+laufenden Container:
+
+```bash
+docker exec ${STACK_NAME}_BACKUP mkdir -p /data/tmp
+docker exec -it -e TMPDIR=/data/tmp ${STACK_NAME}_BACKUP \
+    backuphelper restore 2024-02-05_05-15-00 --only database
+```
+
+Unter PostgreSQL 16 und aelter (`POSTGRES_VERSION`, Standard 18) laeuft jeder Restore ueber
+dieses Skript, auch ohne Unterschied, und braucht den Platz immer; bis BackupHelper 1.10.3
+scheiterte dort jeder Restore
+(`unrecognized configuration parameter "transaction_timeout"`).
 
 **Aeltere Snapshots** (vor dem Wechsel auf das Custom-Format) enthalten
 `database.sql.gz`. Den spielt die Engine mit `psql` ein, und das gelingt nur in
@@ -389,7 +475,10 @@ jedem Release ein eigener CI-Lauf auf dem Cluster-Stack
 des Standard-Workspaces liest jede Instanz nur beim Start (siehe README, Cluster Mode,
 erster Benutzer), und das Leeren des Caches aendert daran nichts. Einen Snapshot einer
 anderen Installation - etwa beim Umzug - deshalb nur mit gestoppten Instanzen einspielen,
-wie oben.
+wie oben. Ebenso einen Snapshot von vor einem NocoDB-Upgrade: Laufende Instanzen behalten
+den Code der neueren Version, deren Tabellen der Restore entfernt, bis sie neu starten.
+Liefen sie doch weiter, alle stoppen und den Stack mit `up -d` starten, wie oben;
+`nocodb-server-1` migriert dann erneut.
 
 #### Daten-Dateien wiederherstellen (nach dem Datenbank-Restore)
 
@@ -588,7 +677,13 @@ docker exec -it ${STACK_NAME}_BACKUP backuphelper nocodb restore-records 2024-02
 
 #### Szenario 4: Manuelle SQL-Wiederherstellung
 
-Für fortgeschrittene Benutzer, die direkt mit PostgreSQL arbeiten:
+Für fortgeschrittene Benutzer, die direkt mit PostgreSQL arbeiten - nur in eine leere
+Datenbank oder eine mit unveraendertem Schema. Ueber eine seit dem Snapshot veraenderte
+Datenbank (neue Tabelle in einer Base, zurueckgenommenes Upgrade) bricht ein rohes
+`pg_restore --clean` ab oder laesst Tabellen stehen, an denen NocoDB beim Start scheitert.
+Dafuer `backuphelper restore` nehmen
+([Datenbank wiederherstellen](#datenbank-wiederherstellen)) oder die Datenbank vorher neu
+anlegen (`DROP DATABASE`/`CREATE DATABASE` wie dort).
 
 ```bash
 # Dump aus dem Snapshot-Archiv holen
@@ -756,6 +851,20 @@ curl -H "xc-token: ${NOCODB_API_TOKEN}" http://localhost:8080/api/v2/meta/bases
 # - NocoDB nicht erreichbar
 ```
 
+#### Restore abgelehnt
+
+```text
+postgres restore refused: none of the ... relation(s) ... is in ...
+```
+
+Die Ziel-Datenbank teilt keine Tabelle mit dem Snapshot; vermutlich ist es nicht die
+NocoDB-Datenbank, und Ersetzen wuerde sie ganz loeschen. Jede NocoDB-Datenbank, auch eine
+frisch installierte, teilt die Metadaten-Tabellen in `public` mit dem Snapshot. Zuerst mit
+`backuphelper config` pruefen, dass der Restore in die Datenbank `nocodb` auf
+`database-server` schreibt. Nur wenn es die NocoDB-Datenbank dieses Stacks ist, sie leer
+neu anlegen (`DROP DATABASE`/`CREATE DATABASE`, siehe
+[Datenbank wiederherstellen](#datenbank-wiederherstellen)) und erneut einspielen.
+
 ### Round-Trip-Test in CI
 
 Jedes Release haengt an einem echten Backup und Restore dieses Stacks. Der Job
@@ -922,7 +1031,7 @@ Full database dump for disaster recovery:
 
 - **Format:** PostgreSQL custom format (`database.dump`, compressed)
 - **Contents:** Complete database structure and data
-- **Restore:** Using the CLI tool (`pg_restore --clean --if-exists`), also into a running database
+- **Restore:** Using the CLI tool (`backuphelper restore`), also into a running database or one that changed since the snapshot
 - **Recommendation:** Primary backup for full recovery
 
 #### 2. NocoDB Data Files (tar.gz)
@@ -1196,10 +1305,93 @@ docker compose start nocodb-server
 
 **WARNING:** This overwrites the entire database!
 
-The dump is in the custom format (`database.dump`); the engine restores it with
-`pg_restore --clean --if-exists --single-transaction`, so it replaces every object
-of the backup, also in a running database. Stop NocoDB first so that no open
-connection blocks the restore.
+The dump is in the custom format (`database.dump`). Into an empty database or one with the
+snapshot's schema (only rows changed) the engine restores it with
+`pg_restore --clean --if-exists --single-transaction`, so it replaces every object of the
+backup, also in a running database. Stop NocoDB first so that no open connection blocks
+the restore.
+
+**Database changed since the snapshot** (a table created in an existing base, or a newer
+NocoDB version migrated its meta tables): since BackupHelper 1.10.4 the engine then
+replaces the snapshot's schemas in **one** transaction. It drops what the snapshot does not
+contain in `public` and in the base schemas (one per base, named after the base id) -
+tables, views, sequences, foreign keys, functions, procedures, aggregates, types and
+domains - then drops the base schemas whole and replays the dump. Any error rolls
+everything back. BackupHelper 1.10.2 and 1.10.3 already replace tables, views, sequences,
+foreign keys, types and domains and drop the base schemas whole, but leave functions,
+procedures and aggregates in `public` in place (and fail on PostgreSQL 16 and older, see
+below). Up to BackupHelper 1.10.1 such a restore failed and rolled back
+(`cannot drop schema ... because other objects depend on it`), or it left the newer
+version's tables in place, whose migration then stopped NocoDB at its next start.
+
+The log then shows `restoring ... by replacing the N relation(s) of schema(s) ...` and,
+after the commit, `not in the snapshot, dropped: ...` with everything that does not come
+back. psql reports objects taken along with `drop cascades to ...`, also ones the dump
+recreates right after. For NocoDB this means:
+
+- Tables created in an existing base since the snapshot are gone afterwards; the log
+  names them.
+- What operators created in the NocoDB database themselves (tables, views, functions,
+  e.g. for BI) and is not in the snapshot is dropped as well. In other schemas (a BI view
+  in schema `bi`, say) this concerns only objects that depend on NocoDB's tables: if such
+  an object is the only difference, the restore fails and rolls back (PostgreSQL's
+  `DETAIL` names the object) - drop it and restore again. With any other difference the
+  restore drops it too, and the log names it. Keep your own objects in a database of
+  their own.
+- Bases created after the snapshot live in schemas the snapshot does not contain: they
+  stay in the database, but NocoDB no longer shows them. List the schemas with
+  `docker exec ${STACK_NAME}_DATABASE psql -U nocodb -d nocodb -c '\dn'`; a base schema
+  (named after the base id, e.g. `p5jsz0gcohesakm`) whose id NocoDB no longer knows (`id`
+  in `/api/v2/meta/bases`, see [API Export Errors](#api-export-errors)) can be dropped
+  there with `-c 'DROP SCHEMA <base-id> CASCADE'` if needed.
+
+**Rolling back an upgrade:** a snapshot taken before a NocoDB upgrade can be restored over
+the newer version's database. When the newer version starts afterwards, it finds the
+snapshot's schema and migrates it again; the commands above are enough for that (stop
+NocoDB, `restore <id> --only database`, `start`). To go back to the old version as well,
+set `NOCODB_VERSION` to the old release and start with `up -d` instead of `start`, with
+the same `-f` options as at deployment: `start` restarts the existing container with the
+image it already has, so the newer version again.
+
+```bash
+docker compose stop nocodb-server
+docker exec -it ${STACK_NAME}_BACKUP backuphelper restore 2024-02-05_05-15-00 --only database
+# set NOCODB_VERSION in .env to the old release, then:
+docker compose up -d nocodb-server
+```
+
+In the cluster only with the instances stopped (see below); the commands there start with
+`up -d` anyway.
+
+**Room for the restore:** over a changed database the engine first writes the snapshot's
+database (`database.dump`), data included, as an uncompressed SQL script into the
+restore's temporary directory, `/tmp` in the `nocodb-backup` container. Plan for about two
+to three times the snapshot. The compose files set no `tmpfs` there: `/tmp` lives on the
+host's Docker disk, like the stack's volumes (`nocodb-backup-data` included). If that is
+short, either free space on that disk or give the restore a directory on another disk -
+with a container of its own, with the same `-f` options as at deployment. `--no-deps`
+keeps it from starting the stopped `nocodb-server`; the arguments after `nocodb-backup` go
+to `backuphelper`:
+
+```bash
+docker compose --profile backup run --rm --no-deps \
+    -v /mnt/big/restore-tmp:/restore-tmp -e TMPDIR=/restore-tmp \
+    nocodb-backup restore 2024-02-05_05-15-00 --only database
+```
+
+If the `nocodb-backup-data` volume itself lives on another disk, the running container
+does as well:
+
+```bash
+docker exec ${STACK_NAME}_BACKUP mkdir -p /data/tmp
+docker exec -it -e TMPDIR=/data/tmp ${STACK_NAME}_BACKUP \
+    backuphelper restore 2024-02-05_05-15-00 --only database
+```
+
+On PostgreSQL 16 and older (`POSTGRES_VERSION`, default 18) every restore runs through
+this script, also without a difference, and always needs the room; up to BackupHelper
+1.10.3 every restore failed there
+(`unrecognized configuration parameter "transaction_timeout"`).
 
 **Older snapshots** (taken before the switch to the custom format) hold
 `database.sql.gz`. The engine replays it with `psql`, which only works into an
@@ -1242,7 +1434,10 @@ restore over running instances, cache flush included, before every release
 every instance reads the id of the default workspace only when it starts (see the README,
 cluster mode, first user), and emptying the cache does not change that. Restore a snapshot
 of another installation - when moving, for example - only with the instances stopped, as
-above.
+above. The same goes for a snapshot taken before a NocoDB upgrade: running instances keep
+the newer version's code, whose tables the restore removes, until they restart. If they
+kept running, stop all of them and start the stack with `up -d`, as above;
+`nocodb-server-1` then migrates again.
 
 #### Restore Data Files (after the database restore)
 
@@ -1440,7 +1635,12 @@ docker exec -it ${STACK_NAME}_BACKUP backuphelper nocodb restore-records 2024-02
 
 #### Scenario 4: Manual SQL Recovery
 
-For advanced users working directly with PostgreSQL:
+For advanced users working directly with PostgreSQL - only into an empty database or one
+with an unchanged schema. Over a database that changed since the snapshot (a new table in
+a base, a rolled-back upgrade) a raw `pg_restore --clean` fails or leaves tables behind
+that stop NocoDB at its start. Use `backuphelper restore` for that
+([Restore Database](#restore-database)) or recreate the database first
+(`DROP DATABASE`/`CREATE DATABASE` as shown there).
 
 ```bash
 # Take the dump out of the snapshot archive
@@ -1606,6 +1806,20 @@ curl -H "xc-token: ${NOCODB_API_TOKEN}" http://localhost:8080/api/v2/meta/bases
 # - Wrong NOCODB_API_URL
 # - NocoDB unreachable
 ```
+
+#### Restore Refused
+
+```text
+postgres restore refused: none of the ... relation(s) ... is in ...
+```
+
+The target database shares no table with the snapshot; it is most likely not the NocoDB
+database, and replacing would drop all of it. Every NocoDB database, even a fresh install,
+shares the meta tables in `public` with the snapshot. First check with
+`backuphelper config` that the restore writes to database `nocodb` on `database-server`.
+Only if it is this stack's NocoDB database, recreate it empty
+(`DROP DATABASE`/`CREATE DATABASE`, see [Restore Database](#restore-database)) and restore
+again.
 
 ### Round-Trip Test in CI
 

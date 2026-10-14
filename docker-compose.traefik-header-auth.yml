@@ -310,9 +310,11 @@ services:
       # BackupHelper engine config. Non-secret values interpolated by compose from
       # .env; secrets use $${VAR} so the engine/plugin resolves them at runtime from
       # the container env (never written into the rendered config).
-      # dump_format "custom": the engine restores it with pg_restore --clean
-      # --if-exists, which also works over a live database. A "plain" dump is
-      # replayed with psql and stops at the first table that already exists.
+      # dump_format "custom": restored with pg_restore --clean --if-exists, also
+      # over a live database. Over one that changed since the snapshot (tables
+      # added, a newer NocoDB) the engine first drops the base schemas and what
+      # the snapshot lacks, in one transaction (docs/BACKUP.md). A "plain" dump
+      # is replayed with psql and stops at the first table that already exists.
       # Alert mail: the engine speaks STARTTLS ("tls"), not implicit TLS, so it
       # uses NOCODB_BACKUP_SMTP_PORT/_STARTTLS - not NocoDB's SMTP_PORT/SMTP_TLS.
       BACKUP_CONFIG_JSON: |
