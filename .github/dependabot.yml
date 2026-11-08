@@ -2,7 +2,11 @@
 # Dependabot Configuration
 # =============================================================================
 # Monitors Docker base images and GitHub Actions for updates
-# Combined with docker-maintenance.yml workflow for auto-merge and release
+# Combined with docker-maintenance.yml workflow for auto-merge and release.
+# Base image updates change the shipped images, so they are committed as
+# fix(docker): the release dispatched after the merge cuts a PATCH and
+# pushes the rebuilt images. GitHub Actions updates (chore(ci)) release
+# nothing and are merged by hand.
 # =============================================================================
 
 version: 2
@@ -35,7 +39,7 @@ updates:
       - "docker"
       - "dependabot"
     commit-message:
-      prefix: "chore(docker)"
+      prefix: "fix(docker)"
 
   # Docker base image updates - Init
   - package-ecosystem: "docker"
@@ -50,7 +54,7 @@ updates:
       - "docker"
       - "dependabot"
     commit-message:
-      prefix: "chore(docker)"
+      prefix: "fix(docker)"
 
   # NOTE: /src/nocodb-backup is intentionally NOT watched by Dependabot.
   # It is a meta image FROM the internal ghcr.io/bauer-group/cs-backuphelper

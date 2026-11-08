@@ -301,8 +301,15 @@ jobs:
     secrets: inherit
 
   # ============================================
-  # Release Job (only on main branch push)
+  # Release Job (push to main or workflow_dispatch)
   # ============================================
+  # Dispatched by docker-maintenance.yml after it merged a Dependabot PR (a
+  # merge with GITHUB_TOKEN starts no push run), by the base image monitor
+  # and by hand. Releases only when every validation and round trip above
+  # passed, and only from main (semantic-release branches). Pinned to
+  # github.sha, the commit this run tested: if main moved on while the round
+  # trips ran, this run publishes nothing and the run that tested the newer
+  # main releases both - never a version tagged on an untested commit.
 
   release:
     name: 📦 Create Semantic Release
@@ -318,6 +325,7 @@ jobs:
     uses: bauer-group/automation-templates/.github/workflows/modules-semantic-release.yml@main
     with:
       target-branch: 'main'
+      ref: ${{ github.sha }}   # release the commit this run tested
       dry-run: false
       force-release: ${{ inputs.force-release || false }}
     secrets: inherit
