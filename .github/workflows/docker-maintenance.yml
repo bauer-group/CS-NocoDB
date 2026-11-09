@@ -13,9 +13,12 @@
 #   github-actions  .github/workflows/**        never merged: a CI change
 #
 # A PR whose files do not start docker-release.yml (pull_request paths) stays
-# open as "not tested". The merge is made with GITHUB_TOKEN and starts no
-# push workflow, so the release follows with the next push to main or a
-# manual run of docker-release.yml.
+# open as "not tested". The merge is made with the GITHUB_TOKEN, which starts
+# no push workflow, so after a merge this workflow dispatches
+# docker-release.yml on main (release-workflow) and waits for it; a release
+# run that does not succeed turns this job red. That run builds the three
+# images and runs the backup round trips on the merged commit again, then
+# releases exactly that commit (fix(docker) -> PATCH) and pushes the images.
 # =============================================================================
 
 name: 🔧 Docker Maintenance
@@ -25,8 +28,11 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: write       # merge
+  pull-requests: write  # approve, read the PR
+  checks: read          # check runs and suites
+  statuses: read        # commit statuses
+  actions: write        # dispatch the release; read workflow runs
 
 jobs:
   maintenance:
@@ -38,4 +44,8 @@ jobs:
       # Merge only after this PR CI has passed on the PR head commit - it
       # builds the images and runs the backup round trip.
       required-workflows: '.github/workflows/docker-release.yml'
+      # A merge made with the GITHUB_TOKEN starts no push workflow: dispatch
+      # the release on main after a merge and fail this job if it does not
+      # succeed (release-wait-minutes, default 60).
+      release-workflow: '.github/workflows/docker-release.yml'
     secrets: inherit

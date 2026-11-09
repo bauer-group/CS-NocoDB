@@ -301,12 +301,27 @@ jobs:
     secrets: inherit
 
   # ============================================
-  # Release Job (only on main branch push)
+  # Release Job (push to main or dispatch)
   # ============================================
+  # Needs the validation, the backup round trips and the three image builds
+  # of this run (the *-validate jobs below run on every event and push
+  # nothing, with the module that publishes the images): a failed test or
+  # build skips the release and every image push. Only a run that created a
+  # release publishes - never a PR, a branch dispatch or a run that
+  # released nothing.
 
   release:
     name: 📦 Create Semantic Release
-    needs: [validate-compose, validate-scripts, backup-roundtrip, backup-roundtrip-cluster, backup-roundtrip-upgrade, backup-roundtrip-cluster-upgrade]
+    needs:
+      - validate-compose
+      - validate-scripts
+      - backup-roundtrip
+      - backup-roundtrip-cluster
+      - backup-roundtrip-upgrade
+      - backup-roundtrip-cluster-upgrade
+      - docker-build-validate
+      - docker-build-init-validate
+      - docker-build-backup-validate
     if: |
       (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
       needs.validate-compose.result == 'success' &&
@@ -314,10 +329,19 @@ jobs:
       needs.backup-roundtrip.result == 'success' &&
       needs.backup-roundtrip-cluster.result == 'success' &&
       needs.backup-roundtrip-upgrade.result == 'success' &&
-      needs.backup-roundtrip-cluster-upgrade.result == 'success'
+      needs.backup-roundtrip-cluster-upgrade.result == 'success' &&
+      needs.docker-build-validate.result == 'success' &&
+      needs.docker-build-init-validate.result == 'success' &&
+      needs.docker-build-backup-validate.result == 'success'
     uses: bauer-group/automation-templates/.github/workflows/modules-semantic-release.yml@main
     with:
       target-branch: 'main'
+      # Release the commit this run validated and built - the image jobs
+      # below build it too. Unpinned, the release would take the tip of
+      # main: a push that landed meanwhile would be tagged untested and be
+      # missing from the images. Pinned, nothing is released once main has
+      # moved on, and the run for the newer main releases both.
+      ref: ${{ github.sha }}
       dry-run: false
       force-release: ${{ inputs.force-release || false }}
     secrets: inherit
@@ -356,11 +380,13 @@ jobs:
       sync-dockerhub-readme: true
     secrets: inherit
 
-  docker-build-pr:
-    name: 🔨 Validate Docker Build (PR)
+  # Every event (PR, push, dispatch): builds the image from this commit
+  # without pushing - the PR CI docker-maintenance.yml waits for, and on a
+  # push or dispatch a gate of the release.
+  docker-build-validate:
+    name: 🔨 Validate Docker Build
     needs: [validate-compose, validate-scripts]
     if: |
-      github.event_name == 'pull_request' &&
       needs.validate-compose.result == 'success' &&
       needs.validate-scripts.result == 'success'
     uses: bauer-group/automation-templates/.github/workflows/docker-build.yml@main
@@ -413,11 +439,13 @@ jobs:
       sync-dockerhub-readme: true
     secrets: inherit
 
-  docker-build-init-pr:
-    name: 🔨 Validate Init Build (PR)
+  # Every event (PR, push, dispatch): builds the image from this commit
+  # without pushing - the PR CI docker-maintenance.yml waits for, and on a
+  # push or dispatch a gate of the release.
+  docker-build-init-validate:
+    name: 🔨 Validate Init Build
     needs: [validate-compose, validate-scripts]
     if: |
-      github.event_name == 'pull_request' &&
       needs.validate-compose.result == 'success' &&
       needs.validate-scripts.result == 'success'
     uses: bauer-group/automation-templates/.github/workflows/docker-build.yml@main
@@ -470,11 +498,13 @@ jobs:
       sync-dockerhub-readme: true
     secrets: inherit
 
-  docker-build-backup-pr:
-    name: 🔨 Validate Backup Build (PR)
+  # Every event (PR, push, dispatch): builds the image from this commit
+  # without pushing - the PR CI docker-maintenance.yml waits for, and on a
+  # push or dispatch a gate of the release.
+  docker-build-backup-validate:
+    name: 🔨 Validate Backup Build
     needs: [validate-compose, validate-scripts]
     if: |
-      github.event_name == 'pull_request' &&
       needs.validate-compose.result == 'success' &&
       needs.validate-scripts.result == 'success'
     uses: bauer-group/automation-templates/.github/workflows/docker-build.yml@main
