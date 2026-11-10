@@ -4,6 +4,18 @@ All notable changes to this project are documented here. This file is maintained
 automatically by [semantic-release](https://github.com/semantic-release/semantic-release)
 on every release to `main`.
 
+## [1.0.21](https://github.com/bauer-group/CS-NocoDB/compare/v1.0.20...v1.0.21) (2026-11-10)
+
+### 🐛 Bug Fixes
+
+* **docker:** bump python in /src/nocodb-init ([#14](https://github.com/bauer-group/CS-NocoDB/issues/14)) ([bcd453b](https://github.com/bauer-group/CS-NocoDB/commit/bcd453ba8308fe740d3f2a12a21ff9e78de6daf0))
+
+### 🔧 Maintenance
+
+* update Dockerfile version to 1.0.20 ([9e6d34f](https://github.com/bauer-group/CS-NocoDB/commit/9e6d34fc20526acb2691557f500e73902ff4ebe0))
+* update Dockerfile version to 1.0.20 ([ca366cb](https://github.com/bauer-group/CS-NocoDB/commit/ca366cbb26b4f72541510c898570680c2143e98d))
+* update Dockerfile version to 1.0.20 ([64eb8c0](https://github.com/bauer-group/CS-NocoDB/commit/64eb8c017062e9043f08a1415e845590e97711e4))
+
 ## [1.0.20](https://github.com/bauer-group/CS-NocoDB/compare/v1.0.19...v1.0.20) (2026-11-10)
 
 ### 🔧 Maintenance
