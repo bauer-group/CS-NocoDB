@@ -4,21 +4,21 @@
     {
       "name": "nocodb",
       "image": "nocodb/nocodb",
-      "tag": "latest",
+      "dockerfile": "src/nocodb/Dockerfile",
       "variable": "NOCODB_LATEST_DIGEST",
       "description": "NocoDB open source database platform"
     },
     {
       "name": "python-alpine",
       "image": "python",
-      "tag": "3.15-alpine",
+      "dockerfile": "src/nocodb-init/Dockerfile",
       "variable": "PYTHON_ALPINE_DIGEST",
       "description": "Python Alpine base image for nocodb-init"
     },
     {
       "name": "backuphelper",
       "image": "ghcr.io/bauer-group/cs-backuphelper/backuphelper",
-      "tag": "latest",
+      "dockerfile": "src/nocodb-backup/Dockerfile",
       "variable": "BACKUPHELPER_LATEST_DIGEST",
       "description": "Central BackupHelper engine - base for the src/nocodb-backup meta image; rebuilds when the digest moves"
     }
