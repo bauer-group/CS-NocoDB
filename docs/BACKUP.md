@@ -950,7 +950,7 @@ Einstellungen und Skripten des Cluster-Laufs oben).
 | Seed, Backup | Wie oben, mit dem Sidecar des Releases; Archiv und Manifest muessen danach im Bucket liegen |
 | Upgrade | Die aus dem Commit gebauten Images uebernehmen die Image-Referenzen, `docker compose up -d` erstellt die Container neu - wie bei einem Betreiber nach `docker compose pull`. Der Datensatz muss danach vollstaendig da sein, `backuphelper healthcheck` muss im neuen Sidecar mit dem Snapshot des alten bestehen |
 | Neuer Host | Nach dem Loeschen werden Container und Daten-Volume des Sidecars geleert; `list` darf den Snapshot nur noch als off-site zeigen |
-| Restore | Der neue Sidecar holt den alten Snapshot aus dem Bucket und spielt ihn ein; danach die volle Pruefung wie oben, auch des REST-Exports im heruntergeladenen Snapshot |
+| Restore | Der neue Sidecar holt den alten Snapshot aus dem Bucket und spielt ihn ein; danach die volle Pruefung wie oben, auch des REST-Exports im heruntergeladenen Snapshot. Auf dem Cluster-Stack wie fuer einen [Snapshot von vor einem NocoDB-Upgrade](#datenbank-wiederherstellen) beschrieben: alle Instanzen gestoppt, danach `up -d`, `nocodb-server-1` migriert erneut; die Pruefung verlangt, dass jede Instanz neu gestartet ist |
 
 Die Traefik-Dateien treten dem externen Proxy-Netz `PROXY_NETWORK` bei, das der Lauf anlegt
 (`external-networks: 'auto'`). Traefik selbst laeuft nicht: Labels, Routing und TLS sind
@@ -1903,7 +1903,7 @@ run above).
 | Seed, back up | As above, with the release's sidecar; archive and manifest must then be in the bucket |
 | Upgrade | The images built from the commit take over the image references and `docker compose up -d` recreates the containers - as for an operator after `docker compose pull`. The record must then be complete, and `backuphelper healthcheck` must pass in the new sidecar with the old one's snapshot |
 | New host | After the deletion the sidecar's container and data volume are wiped; `list` must show the snapshot as off-site only |
-| Restore | The new sidecar fetches the old snapshot from the bucket and restores it; then the full check as above, including the REST export in the downloaded snapshot |
+| Restore | The new sidecar fetches the old snapshot from the bucket and restores it; then the full check as above, including the REST export in the downloaded snapshot. On the cluster stack as described for a [snapshot from before a NocoDB upgrade](#restore-database): every instance stopped, then `up -d`, `nocodb-server-1` migrates again; the check requires every instance to have restarted |
 
 The Traefik files join the external proxy network `PROXY_NETWORK`, which the run creates
 (`external-networks: 'auto'`). Traefik itself does not run: labels, routing and TLS are not

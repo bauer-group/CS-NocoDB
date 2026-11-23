@@ -14,7 +14,12 @@
 # Once mutate.sh has run, also:
 #   - every instance still runs in the container it ran in at the mutation,
 #     never restarted: NocoDB empties its Redis cache whenever an instance
-#     starts, which would hide whether the sidecar did
+#     starts, which would hide whether the sidecar did. Except after the
+#     restore of an upgrade run (ROUNDTRIP_PREVIOUS_IMAGES): its snapshot is
+#     the previous release's, which docs/BACKUP.md restores with every
+#     instance stopped - there each one must have started again since the
+#     mutation, or it would keep serving without migrating the restored
+#     metadata to its own NocoDB version
 #   - the key mutate.sh wrote into the instances' Redis database is there
 #     before the restore and gone after it: the sidecar's post_restore hook
 #     emptied the database the instances read their metadata from
@@ -31,10 +36,20 @@ FAILED=0
 EXPECTED=$(printf '%s\n' "${ATTACHMENT_CONTENTS[@]}" | sort)
 NC_TOKEN=$(sidecar_token)
 
-# -- since the mutation: no instance restarted, Redis emptied by the restore ------
+# -- since the mutation: instances as the restore leaves them, Redis emptied -----
 if [ -f "$INSTANCES_FILE" ]; then
   CONTAINERS=$(instance_containers)
-  if [ "$CONTAINERS" = "$(cat "$INSTANCES_FILE")" ]; then
+  if [ "$WANT" = 1 ] && [ -n "${ROUNDTRIP_PREVIOUS_IMAGES:-}" ]; then
+    # Lines unchanged since the mutation: an instance that never stopped.
+    KEPT=$(comm -12 <(sort "$INSTANCES_FILE") <(sort <<< "$CONTAINERS"))
+    if [ -z "$KEPT" ]; then
+      echo "ok   instances: $(wc -l <<< "$CONTAINERS"), every one started again after the restore of the previous release's snapshot"
+    else
+      echo "FAIL instances kept running through the restore of the previous release's snapshot - they serve the restored metadata without migrating it:"
+      echo "$KEPT"
+      FAILED=1
+    fi
+  elif [ "$CONTAINERS" = "$(cat "$INSTANCES_FILE")" ]; then
     echo "ok   instances: $(wc -l <<< "$CONTAINERS"), none restarted since the mutation"
   else
     echo "FAIL instances were recreated or restarted since the mutation:"

@@ -245,8 +245,14 @@ jobs:
 
   # The same upgrade with an off-site copy and a new host on the cluster
   # stack, with the files, limits and scripts of the cluster round trip above.
-  # The upgrade recreates every instance on the new image; the restore then
-  # runs while all four keep serving, as in the fresh cluster run.
+  # The upgrade recreates every instance on the new image. The snapshot was
+  # taken by the previous release's NocoDB, so the restore follows
+  # docs/BACKUP.md for a snapshot from before a NocoDB upgrade: every instance
+  # stopped, then 'up -d', where nocodb-server-1 migrates the restored
+  # metadata again and the others wait for it. Instances kept running would
+  # keep the newer code and query the tables and columns the restore removed
+  # (NocoDB 2026.10.2: nc_agents.scope). The restore while every instance
+  # keeps serving stays covered by the fresh cluster run above.
   backup-roundtrip-cluster-upgrade:
     name: 🧪 Backup Round Trip (Cluster, upgrade, S3)
     needs: [validate-compose, validate-scripts]
@@ -287,6 +293,8 @@ jobs:
         ]
       backup-service: 'nocodb-backup'
       require-components: 'database nocodb-data nocodb'
+      # Every instance of the stack under test (Stage S: 1-4), see above.
+      services-to-stop-before-restore: 'nocodb-server-1 nocodb-server-2 nocodb-server-3 nocodb-server-4'
       seed-script: 'tests/backup-roundtrip/cluster/seed.sh'
       mutate-script: 'tests/backup-roundtrip/cluster/mutate.sh'
       check-script: 'tests/backup-roundtrip/cluster/check.sh'

@@ -15,7 +15,8 @@
 # Then it records what the check after the restore compares against: the
 # container and start time of every instance (none may be restarted - NocoDB
 # empties the cache whenever an instance starts, which would hide whether the
-# sidecar did) and a sentinel key in the instances' Redis database.
+# sidecar did; after an upgrade run's restore, which stops them all, every one
+# must have started again) and a sentinel key in the instances' Redis database.
 # =============================================================================
 set -euo pipefail
 # shellcheck source=tests/backup-roundtrip/cluster/common.sh

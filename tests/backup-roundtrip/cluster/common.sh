@@ -5,7 +5,8 @@
 # Used by seed.sh, mutate.sh and check.sh in this directory. The cluster round
 # trip starts docker-compose.cluster.yml - HAProxy, nocodb-server-1..N and the
 # Redis they share - with docker-compose.ci.yml from this directory merged over
-# it, and restores while every instance keeps running.
+# it, and restores while every instance keeps running - in the upgrade run, a
+# snapshot of the previous release, with every instance stopped.
 #
 # It reuses the single-instance scripts one directory up and points them at
 # the cluster: API calls go through the load balancer, as users and the
